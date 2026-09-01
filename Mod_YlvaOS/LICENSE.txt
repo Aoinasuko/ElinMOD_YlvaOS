@@ -1,0 +1,16 @@
+YlvaOS MOD License Notice
+=========================
+
+The original YlvaOS MOD glue code, UI code, build scripts, and packaging
+metadata in this workspace do not currently declare a public open-source
+license. Unless the MOD author chooses a license later, all rights in the
+original YlvaOS MOD material are reserved by the MOD author.
+
+This package also contains third-party software. Third-party components keep
+their own upstream licenses. See THIRD_PARTY_NOTICES.md, SOURCE_OFFER.md,
+LEGAL/, LICENSES/, and the license files included inside each third-party
+directory.
+
+Before publishing or redistributing this MOD package, review the third-party
+license obligations, especially for GPL/LGPL components such as QEMU, the
+Linux kernel, BusyBox, apk-tools, and related Linux userspace packages.

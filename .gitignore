@@ -1,0 +1,5 @@
+YlvaOS/bin/
+YlvaOS/obj/
+Mod_YlvaOS/*.dll
+Mod_YlvaOS/*.pdb
+_work/

@@ -1,0 +1,1048 @@
+using System;
+using System.Collections.Generic;
+using System.Text;
+using UnityEngine;
+using UnityEngine.Events;
+using UnityEngine.UI;
+
+namespace YlvaOS
+{
+    internal sealed class LayerYlvaOs : ELayer
+    {
+        private const int MaxInputLength = 256;
+        private static readonly DesktopKeyBinding[] DesktopKeyBindings = new DesktopKeyBinding[]
+        {
+            new DesktopKeyBinding(KeyCode.LeftShift, 0xffe1),
+            new DesktopKeyBinding(KeyCode.RightShift, 0xffe2),
+            new DesktopKeyBinding(KeyCode.LeftControl, 0xffe3),
+            new DesktopKeyBinding(KeyCode.RightControl, 0xffe4),
+            new DesktopKeyBinding(KeyCode.LeftAlt, 0xffe9),
+            new DesktopKeyBinding(KeyCode.RightAlt, 0xffea),
+            new DesktopKeyBinding(KeyCode.Escape, 0xff1b),
+            new DesktopKeyBinding(KeyCode.Backspace, 0xff08),
+            new DesktopKeyBinding(KeyCode.Tab, 0xff09),
+            new DesktopKeyBinding(KeyCode.Return, 0xff0d),
+            new DesktopKeyBinding(KeyCode.KeypadEnter, 0xff8d),
+            new DesktopKeyBinding(KeyCode.Space, 0x0020),
+            new DesktopKeyBinding(KeyCode.LeftArrow, 0xff51),
+            new DesktopKeyBinding(KeyCode.UpArrow, 0xff52),
+            new DesktopKeyBinding(KeyCode.RightArrow, 0xff53),
+            new DesktopKeyBinding(KeyCode.DownArrow, 0xff54),
+            new DesktopKeyBinding(KeyCode.Home, 0xff50),
+            new DesktopKeyBinding(KeyCode.End, 0xff57),
+            new DesktopKeyBinding(KeyCode.PageUp, 0xff55),
+            new DesktopKeyBinding(KeyCode.PageDown, 0xff56),
+            new DesktopKeyBinding(KeyCode.Insert, 0xff63),
+            new DesktopKeyBinding(KeyCode.Delete, 0xffff),
+            new DesktopKeyBinding(KeyCode.Alpha0, 0x0030),
+            new DesktopKeyBinding(KeyCode.Alpha1, 0x0031),
+            new DesktopKeyBinding(KeyCode.Alpha2, 0x0032),
+            new DesktopKeyBinding(KeyCode.Alpha3, 0x0033),
+            new DesktopKeyBinding(KeyCode.Alpha4, 0x0034),
+            new DesktopKeyBinding(KeyCode.Alpha5, 0x0035),
+            new DesktopKeyBinding(KeyCode.Alpha6, 0x0036),
+            new DesktopKeyBinding(KeyCode.Alpha7, 0x0037),
+            new DesktopKeyBinding(KeyCode.Alpha8, 0x0038),
+            new DesktopKeyBinding(KeyCode.Alpha9, 0x0039),
+            new DesktopKeyBinding(KeyCode.A, 0x0061),
+            new DesktopKeyBinding(KeyCode.B, 0x0062),
+            new DesktopKeyBinding(KeyCode.C, 0x0063),
+            new DesktopKeyBinding(KeyCode.D, 0x0064),
+            new DesktopKeyBinding(KeyCode.E, 0x0065),
+            new DesktopKeyBinding(KeyCode.F, 0x0066),
+            new DesktopKeyBinding(KeyCode.G, 0x0067),
+            new DesktopKeyBinding(KeyCode.H, 0x0068),
+            new DesktopKeyBinding(KeyCode.I, 0x0069),
+            new DesktopKeyBinding(KeyCode.J, 0x006a),
+            new DesktopKeyBinding(KeyCode.K, 0x006b),
+            new DesktopKeyBinding(KeyCode.L, 0x006c),
+            new DesktopKeyBinding(KeyCode.M, 0x006d),
+            new DesktopKeyBinding(KeyCode.N, 0x006e),
+            new DesktopKeyBinding(KeyCode.O, 0x006f),
+            new DesktopKeyBinding(KeyCode.P, 0x0070),
+            new DesktopKeyBinding(KeyCode.Q, 0x0071),
+            new DesktopKeyBinding(KeyCode.R, 0x0072),
+            new DesktopKeyBinding(KeyCode.S, 0x0073),
+            new DesktopKeyBinding(KeyCode.T, 0x0074),
+            new DesktopKeyBinding(KeyCode.U, 0x0075),
+            new DesktopKeyBinding(KeyCode.V, 0x0076),
+            new DesktopKeyBinding(KeyCode.W, 0x0077),
+            new DesktopKeyBinding(KeyCode.X, 0x0078),
+            new DesktopKeyBinding(KeyCode.Y, 0x0079),
+            new DesktopKeyBinding(KeyCode.Z, 0x007a),
+            new DesktopKeyBinding(KeyCode.Minus, 0x002d),
+            new DesktopKeyBinding(KeyCode.Equals, 0x003d),
+            new DesktopKeyBinding(KeyCode.LeftBracket, 0x005b),
+            new DesktopKeyBinding(KeyCode.RightBracket, 0x005d),
+            new DesktopKeyBinding(KeyCode.Backslash, 0x005c),
+            new DesktopKeyBinding(KeyCode.Semicolon, 0x003b),
+            new DesktopKeyBinding(KeyCode.Quote, 0x0027),
+            new DesktopKeyBinding(KeyCode.Comma, 0x002c),
+            new DesktopKeyBinding(KeyCode.Period, 0x002e),
+            new DesktopKeyBinding(KeyCode.Slash, 0x002f),
+            new DesktopKeyBinding(KeyCode.BackQuote, 0x0060),
+            new DesktopKeyBinding(KeyCode.Keypad0, 0xffb0),
+            new DesktopKeyBinding(KeyCode.Keypad1, 0xffb1),
+            new DesktopKeyBinding(KeyCode.Keypad2, 0xffb2),
+            new DesktopKeyBinding(KeyCode.Keypad3, 0xffb3),
+            new DesktopKeyBinding(KeyCode.Keypad4, 0xffb4),
+            new DesktopKeyBinding(KeyCode.Keypad5, 0xffb5),
+            new DesktopKeyBinding(KeyCode.Keypad6, 0xffb6),
+            new DesktopKeyBinding(KeyCode.Keypad7, 0xffb7),
+            new DesktopKeyBinding(KeyCode.Keypad8, 0xffb8),
+            new DesktopKeyBinding(KeyCode.Keypad9, 0xffb9),
+            new DesktopKeyBinding(KeyCode.KeypadPeriod, 0xffae),
+            new DesktopKeyBinding(KeyCode.KeypadDivide, 0xffaf),
+            new DesktopKeyBinding(KeyCode.KeypadMultiply, 0xffaa),
+            new DesktopKeyBinding(KeyCode.KeypadMinus, 0xffad),
+            new DesktopKeyBinding(KeyCode.KeypadPlus, 0xffab),
+            new DesktopKeyBinding(KeyCode.KeypadEquals, 0xffbd),
+            new DesktopKeyBinding(KeyCode.F1, 0xffbe),
+            new DesktopKeyBinding(KeyCode.F2, 0xffbf),
+            new DesktopKeyBinding(KeyCode.F3, 0xffc0),
+            new DesktopKeyBinding(KeyCode.F4, 0xffc1),
+            new DesktopKeyBinding(KeyCode.F5, 0xffc2),
+            new DesktopKeyBinding(KeyCode.F6, 0xffc3),
+            new DesktopKeyBinding(KeyCode.F7, 0xffc4),
+            new DesktopKeyBinding(KeyCode.F8, 0xffc5),
+            new DesktopKeyBinding(KeyCode.F9, 0xffc6),
+            new DesktopKeyBinding(KeyCode.F10, 0xffc7),
+            new DesktopKeyBinding(KeyCode.F11, 0xffc8),
+            new DesktopKeyBinding(KeyCode.F12, 0xffc9)
+        };
+
+        private YlvaMachine machine;
+        private Text titleText;
+        private Text bodyText;
+        private Text promptText;
+        private Text footerText;
+        private RawImage desktopImage;
+        private Texture2D desktopTexture;
+        private AudioSource audioSource;
+        private AudioClip audioClip;
+        private Font font;
+        private Font terminalFont;
+        private string inputText = string.Empty;
+        private int historyCursor = -1;
+        private string draftBeforeHistory = string.Empty;
+        private bool cursorVisible = true;
+        private float cursorTimer;
+        private float desktopFrameTimer;
+        private bool lastVmConsoleActive;
+        private bool lastDesktopMode;
+        private int desktopTextureWidth;
+        private int desktopTextureHeight;
+        private int lastDesktopMouseX = -1;
+        private int lastDesktopMouseY = -1;
+        private int lastDesktopButtonMask = -1;
+        private int lastDesktopInputFrame = -1;
+        private readonly HashSet<uint> downDesktopKeySyms = new HashSet<uint>();
+        private readonly Vector3[] desktopWorldCorners = new Vector3[4];
+
+        public void Configure(YlvaMachine machine)
+        {
+            this.machine = machine;
+            inputText = machine.CurrentInput;
+            option = YlvaOsController.CreateLayerOption();
+            onKill = YlvaOsController.CreateUnityEvent();
+            closeOthers = false;
+            defaultActionMode = false;
+        }
+
+        protected override void Awake()
+        {
+            if (option == null)
+            {
+                option = YlvaOsController.CreateLayerOption();
+            }
+
+            if (onKill == null)
+            {
+                onKill = new UnityEvent();
+            }
+
+            base.Awake();
+        }
+
+        public override void OnAfterInit()
+        {
+            base.OnAfterInit();
+            BuildUi();
+            EnsureAudioOutput();
+            RefreshText();
+            EInput.Consume(consumeAxis: true, _skipFrame: 2);
+        }
+
+        public override void OnUpdateInput()
+        {
+            EInput.Consume(consumeAxis: true, _skipFrame: 1);
+
+            if (machine != null && machine.IsDesktopMode)
+            {
+                machine.PumpExternalOutput();
+                UpdateDesktopFrame();
+                HandleDesktopInput();
+                return;
+            }
+
+            if (machine != null && machine.IsVmConsoleActive)
+            {
+                machine.PumpExternalOutput();
+                HandleVmInput();
+                return;
+            }
+
+            if (Input.GetKeyDown(KeyCode.Escape))
+            {
+                Close();
+                return;
+            }
+
+            if (Input.GetKeyDown(KeyCode.UpArrow))
+            {
+                RecallHistory(-1);
+                return;
+            }
+
+            if (Input.GetKeyDown(KeyCode.DownArrow))
+            {
+                RecallHistory(1);
+                return;
+            }
+
+            string input = Input.inputString;
+            if (string.IsNullOrEmpty(input))
+            {
+                return;
+            }
+
+            bool changed = false;
+            foreach (char ch in input)
+            {
+                if (ch == '\b')
+                {
+                    if (inputText.Length > 0)
+                    {
+                        inputText = inputText.Substring(0, inputText.Length - 1);
+                        changed = true;
+                    }
+
+                    continue;
+                }
+
+                if (ch == '\n' || ch == '\r')
+                {
+                    SubmitCommand();
+                    return;
+                }
+
+                if (!char.IsControl(ch) && inputText.Length < MaxInputLength)
+                {
+                    inputText += ch;
+                    changed = true;
+                }
+            }
+
+            if (changed)
+            {
+                historyCursor = -1;
+                machine.CurrentInput = inputText;
+                RefreshText();
+            }
+        }
+
+        public override bool OnBack()
+        {
+            if (machine != null && machine.IsDesktopMode)
+            {
+                SendDesktopKeyPress(0xff1b);
+                return true;
+            }
+
+            if (machine != null && machine.IsVmConsoleActive)
+            {
+                machine.SendRawInput("\u001b");
+                return true;
+            }
+
+            Close();
+            return true;
+        }
+
+        public override void OnRightClick()
+        {
+        }
+
+        public override void OnKill()
+        {
+            ReleaseAllDesktopKeys();
+            if (machine != null)
+            {
+                machine.CurrentInput = inputText;
+            }
+
+            if (YlvaSessionManager.Instance != null)
+            {
+                YlvaSessionManager.Instance.Save();
+            }
+
+            if (desktopTexture != null)
+            {
+                UnityEngine.Object.Destroy(desktopTexture);
+                desktopTexture = null;
+            }
+
+            StopAudioOutput();
+            base.OnKill();
+        }
+
+        private void Update()
+        {
+            bool externalOutput = machine != null && machine.PumpExternalOutput();
+            if (machine != null && machine.IsDesktopMode)
+            {
+                EInput.Consume(consumeAxis: true, _skipFrame: 1);
+                HandleDesktopInput();
+                int fps = machine.Vm != null ? machine.Vm.Config.DesktopRefreshFps : 24;
+                float interval = 1f / Mathf.Max(5, fps);
+                desktopFrameTimer += Time.unscaledDeltaTime;
+                if (desktopFrameTimer >= interval)
+                {
+                    desktopFrameTimer = 0f;
+                    UpdateDesktopFrame();
+                }
+            }
+            else
+            {
+                desktopFrameTimer = 0f;
+            }
+
+            cursorTimer += Time.unscaledDeltaTime;
+            if (cursorTimer >= 0.45f || externalOutput)
+            {
+                cursorTimer = 0f;
+                cursorVisible = !cursorVisible;
+                RefreshText();
+            }
+
+            if (machine != null && machine.CloseRequested)
+            {
+                if (YlvaSessionManager.Instance != null)
+                {
+                    YlvaSessionManager.Instance.Save();
+                }
+
+                Close();
+            }
+        }
+
+        private void HandleVmInput()
+        {
+            try
+            {
+                StringBuilder builder = new StringBuilder(32);
+
+                if (Input.GetKeyDown(KeyCode.Escape))
+                {
+                    builder.Append('\u001b');
+                }
+
+                if (Input.GetKeyDown(KeyCode.UpArrow))
+                {
+                    builder.Append("\u001b[A");
+                }
+
+                if (Input.GetKeyDown(KeyCode.DownArrow))
+                {
+                    builder.Append("\u001b[B");
+                }
+
+                if (Input.GetKeyDown(KeyCode.RightArrow))
+                {
+                    builder.Append("\u001b[C");
+                }
+
+                if (Input.GetKeyDown(KeyCode.LeftArrow))
+                {
+                    builder.Append("\u001b[D");
+                }
+
+                if (Input.GetKeyDown(KeyCode.Delete))
+                {
+                    builder.Append("\u001b[3~");
+                }
+
+                if (Input.GetKeyDown(KeyCode.Home))
+                {
+                    builder.Append("\u001b[H");
+                }
+
+                if (Input.GetKeyDown(KeyCode.End))
+                {
+                    builder.Append("\u001b[F");
+                }
+
+                if (Input.GetKeyDown(KeyCode.PageUp))
+                {
+                    builder.Append("\u001b[5~");
+                }
+
+                if (Input.GetKeyDown(KeyCode.PageDown))
+                {
+                    builder.Append("\u001b[6~");
+                }
+
+                if (IsControlDown() && AppendControlKey(builder))
+                {
+                    SendVmBatch(builder);
+                    return;
+                }
+
+                string input = Input.inputString;
+                if (!string.IsNullOrEmpty(input))
+                {
+                    foreach (char ch in input)
+                    {
+                        if (ch == '\b')
+                        {
+                            builder.Append('\u007f');
+                            continue;
+                        }
+
+                        if (ch == '\n' || ch == '\r')
+                        {
+                            builder.Append("\r\n");
+                            continue;
+                        }
+
+                        if (ch == '\t' || !char.IsControl(ch))
+                        {
+                            builder.Append(ch);
+                        }
+                    }
+                }
+
+                SendVmBatch(builder);
+            }
+            catch (Exception ex)
+            {
+                if (Plugin.Log != null)
+                {
+                    Plugin.Log.LogWarning("YlvaOS VM input failed: " + ex.Message);
+                }
+            }
+        }
+
+        private void SendVmBatch(StringBuilder builder)
+        {
+            if (builder == null || builder.Length == 0)
+            {
+                return;
+            }
+
+            machine.SendRawInput(builder.ToString());
+            if (machine.PumpExternalOutput())
+            {
+                RefreshText();
+            }
+        }
+
+        private bool UpdateDesktopFrame()
+        {
+            if (desktopImage == null || machine == null || !machine.IsDesktopMode)
+            {
+                return false;
+            }
+
+            int width;
+            int height;
+            byte[] rgba;
+            if (!machine.TryCopyDesktopFrame(out width, out height, out rgba) || rgba == null)
+            {
+                return false;
+            }
+
+            if (desktopTexture == null || desktopTextureWidth != width || desktopTextureHeight != height)
+            {
+                if (desktopTexture != null)
+                {
+                    UnityEngine.Object.Destroy(desktopTexture);
+                }
+
+                desktopTexture = new Texture2D(width, height, TextureFormat.RGBA32, false);
+                desktopTexture.filterMode = FilterMode.Bilinear;
+                desktopTexture.wrapMode = TextureWrapMode.Clamp;
+                desktopTextureWidth = width;
+                desktopTextureHeight = height;
+                desktopImage.texture = desktopTexture;
+            }
+
+            desktopTexture.LoadRawTextureData(rgba);
+            desktopTexture.Apply(false, false);
+            return true;
+        }
+
+        private void HandleDesktopInput()
+        {
+            if (lastDesktopInputFrame == Time.frameCount)
+            {
+                return;
+            }
+
+            lastDesktopInputFrame = Time.frameCount;
+            try
+            {
+                HandleDesktopKeyboard();
+                HandleDesktopMouse();
+            }
+            catch (Exception ex)
+            {
+                if (Plugin.Log != null)
+                {
+                    Plugin.Log.LogWarning("YlvaOS desktop input failed: " + ex.Message);
+                }
+            }
+        }
+
+        private void HandleDesktopKeyboard()
+        {
+            foreach (DesktopKeyBinding binding in DesktopKeyBindings)
+            {
+                SendDesktopKeyTransition(binding.Key, binding.KeySym);
+            }
+        }
+
+        private void HandleDesktopMouse()
+        {
+            if (desktopImage == null || desktopTextureWidth <= 0 || desktopTextureHeight <= 0)
+            {
+                return;
+            }
+
+            int x;
+            int y;
+            if (!TryGetDesktopPointer(out x, out y))
+            {
+                if (lastDesktopButtonMask > 0 && lastDesktopMouseX >= 0 && lastDesktopMouseY >= 0)
+                {
+                    machine.SendDesktopPointer(lastDesktopMouseX, lastDesktopMouseY, 0);
+                    lastDesktopButtonMask = 0;
+                }
+
+                return;
+            }
+
+            int mask = 0;
+            if (Input.GetMouseButton(0))
+            {
+                mask |= 1;
+            }
+
+            if (Input.GetMouseButton(2))
+            {
+                mask |= 2;
+            }
+
+            if (Input.GetMouseButton(1))
+            {
+                mask |= 4;
+            }
+
+            Vector2 wheel = Input.mouseScrollDelta;
+            if (wheel.y > 0.01f)
+            {
+                machine.SendDesktopPointer(x, y, mask | 8);
+                machine.SendDesktopPointer(x, y, mask);
+            }
+            else if (wheel.y < -0.01f)
+            {
+                machine.SendDesktopPointer(x, y, mask | 16);
+                machine.SendDesktopPointer(x, y, mask);
+            }
+
+            if (x != lastDesktopMouseX || y != lastDesktopMouseY || mask != lastDesktopButtonMask)
+            {
+                machine.SendDesktopPointer(x, y, mask);
+                lastDesktopMouseX = x;
+                lastDesktopMouseY = y;
+                lastDesktopButtonMask = mask;
+            }
+        }
+
+        private bool TryGetDesktopPointer(out int x, out int y)
+        {
+            x = 0;
+            y = 0;
+            RectTransform rect = desktopImage.rectTransform;
+            Vector2 local;
+            Camera camera = ResolveUiCamera();
+            if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(rect, Input.mousePosition, camera, out local))
+            {
+                return TryGetDesktopPointerFromScreenBounds(out x, out y);
+            }
+
+            Rect bounds = rect.rect;
+            float localX = local.x - bounds.xMin;
+            float localY = bounds.yMax - local.y;
+            if (localX < 0f || localX > bounds.width || localY < 0f || localY > bounds.height)
+            {
+                return TryGetDesktopPointerFromScreenBounds(out x, out y);
+            }
+
+            x = Mathf.Clamp(Mathf.RoundToInt(localX / Mathf.Max(1f, bounds.width) * desktopTextureWidth), 0, desktopTextureWidth - 1);
+            y = Mathf.Clamp(Mathf.RoundToInt(localY / Mathf.Max(1f, bounds.height) * desktopTextureHeight), 0, desktopTextureHeight - 1);
+            return true;
+        }
+
+        private bool TryGetDesktopPointerFromScreenBounds(out int x, out int y)
+        {
+            x = 0;
+            y = 0;
+            if (desktopImage == null || desktopTextureWidth <= 0 || desktopTextureHeight <= 0)
+            {
+                return false;
+            }
+
+            RectTransform rect = desktopImage.rectTransform;
+            Camera camera = ResolveUiCamera();
+            rect.GetWorldCorners(desktopWorldCorners);
+
+            Vector2 min = RectTransformUtility.WorldToScreenPoint(camera, desktopWorldCorners[0]);
+            Vector2 max = min;
+            for (int i = 1; i < desktopWorldCorners.Length; i++)
+            {
+                Vector2 point = RectTransformUtility.WorldToScreenPoint(camera, desktopWorldCorners[i]);
+                min = Vector2.Min(min, point);
+                max = Vector2.Max(max, point);
+            }
+
+            Vector3 mouse = Input.mousePosition;
+            if (mouse.x < min.x || mouse.x > max.x || mouse.y < min.y || mouse.y > max.y)
+            {
+                return false;
+            }
+
+            float width = Mathf.Max(1f, max.x - min.x);
+            float height = Mathf.Max(1f, max.y - min.y);
+            x = Mathf.Clamp(Mathf.RoundToInt((mouse.x - min.x) / width * desktopTextureWidth), 0, desktopTextureWidth - 1);
+            y = Mathf.Clamp(Mathf.RoundToInt((max.y - mouse.y) / height * desktopTextureHeight), 0, desktopTextureHeight - 1);
+            return true;
+        }
+
+        private Camera ResolveUiCamera()
+        {
+            if (desktopImage == null)
+            {
+                return null;
+            }
+
+            Canvas canvas = desktopImage.canvas;
+            if (canvas == null || canvas.renderMode == RenderMode.ScreenSpaceOverlay)
+            {
+                return null;
+            }
+
+            return canvas.worldCamera != null ? canvas.worldCamera : Camera.main;
+        }
+
+        private void SendDesktopKeyPress(uint keySym)
+        {
+            if (machine == null)
+            {
+                return;
+            }
+
+            machine.SendDesktopKey(keySym, true);
+            machine.SendDesktopKey(keySym, false);
+        }
+
+        private void SendDesktopKeyTransition(KeyCode key, uint keySym)
+        {
+            if (Input.GetKeyDown(key) && downDesktopKeySyms.Add(keySym))
+            {
+                machine.SendDesktopKey(keySym, true);
+            }
+
+            if (Input.GetKeyUp(key) && downDesktopKeySyms.Remove(keySym))
+            {
+                machine.SendDesktopKey(keySym, false);
+            }
+        }
+
+        private void ReleaseAllDesktopKeys()
+        {
+            if (downDesktopKeySyms.Count == 0 || machine == null)
+            {
+                downDesktopKeySyms.Clear();
+                return;
+            }
+
+            uint[] keySyms = new uint[downDesktopKeySyms.Count];
+            downDesktopKeySyms.CopyTo(keySyms);
+            downDesktopKeySyms.Clear();
+            foreach (uint keySym in keySyms)
+            {
+                machine.SendDesktopKey(keySym, false);
+            }
+
+            lastDesktopButtonMask = -1;
+            lastDesktopMouseX = -1;
+            lastDesktopMouseY = -1;
+        }
+
+        private void SubmitCommand()
+        {
+            string command = inputText;
+            inputText = string.Empty;
+            machine.CurrentInput = string.Empty;
+            historyCursor = -1;
+            draftBeforeHistory = string.Empty;
+
+            bool close = machine.Submit(command);
+            RefreshText();
+
+            if (YlvaSessionManager.Instance != null)
+            {
+                YlvaSessionManager.Instance.Save();
+            }
+
+            if (close)
+            {
+                Close();
+            }
+        }
+
+        private void RecallHistory(int direction)
+        {
+            IList<string> history = machine.History;
+            if (history.Count == 0)
+            {
+                return;
+            }
+
+            if (historyCursor < 0)
+            {
+                draftBeforeHistory = inputText;
+                historyCursor = direction < 0 ? history.Count - 1 : 0;
+            }
+            else
+            {
+                historyCursor += direction;
+                if (historyCursor < 0)
+                {
+                    historyCursor = 0;
+                }
+
+                if (historyCursor >= history.Count)
+                {
+                    historyCursor = -1;
+                    inputText = draftBeforeHistory;
+                    machine.CurrentInput = inputText;
+                    RefreshText();
+                    return;
+                }
+            }
+
+            inputText = history[historyCursor];
+            machine.CurrentInput = inputText;
+            RefreshText();
+        }
+
+        private void BuildUi()
+        {
+            font = ResolveFont();
+            terminalFont = ResolveTerminalFont();
+
+            RectTransform overlay = CreateRect("YlvaOSOverlay", rectLayers);
+            Stretch(overlay, 0f, 0f, 0f, 0f);
+            Image overlayImage = overlay.gameObject.AddComponent<Image>();
+            overlayImage.color = new Color(0f, 0f, 0f, 0.58f);
+
+            RectTransform window = CreateRect("YlvaOSWindow", overlay);
+            window.anchorMin = new Vector2(0.08f, 0.08f);
+            window.anchorMax = new Vector2(0.92f, 0.92f);
+            window.offsetMin = Vector2.zero;
+            window.offsetMax = Vector2.zero;
+            Image windowImage = window.gameObject.AddComponent<Image>();
+            windowImage.color = new Color(0.035f, 0.041f, 0.045f, 0.98f);
+
+            RectTransform header = CreateRect("Header", window);
+            header.anchorMin = new Vector2(0f, 1f);
+            header.anchorMax = new Vector2(1f, 1f);
+            header.pivot = new Vector2(0.5f, 1f);
+            header.anchoredPosition = Vector2.zero;
+            header.sizeDelta = new Vector2(0f, 44f);
+            Image headerImage = header.gameObject.AddComponent<Image>();
+            headerImage.color = new Color(0.09f, 0.12f, 0.13f, 1f);
+
+            titleText = CreateText("Title", header, 16, TextAnchor.MiddleLeft, new Color(0.78f, 0.93f, 0.83f, 1f));
+            Stretch(titleText.rectTransform, 16f, 0f, 58f, 0f);
+
+            Button closeButton = CreateButton("Close", header, "X");
+            RectTransform closeRect = closeButton.GetComponent<RectTransform>();
+            closeRect.anchorMin = new Vector2(1f, 0.5f);
+            closeRect.anchorMax = new Vector2(1f, 0.5f);
+            closeRect.pivot = new Vector2(1f, 0.5f);
+            closeRect.anchoredPosition = new Vector2(-8f, 0f);
+            closeRect.sizeDelta = new Vector2(38f, 30f);
+            closeButton.onClick.AddListener(Close);
+
+            bodyText = CreateText("Terminal", window, 16, TextAnchor.UpperLeft, new Color(0.78f, 0.94f, 0.80f, 1f));
+            if (terminalFont != null)
+            {
+                bodyText.font = terminalFont;
+            }
+
+            bodyText.lineSpacing = 1.05f;
+            Stretch(bodyText.rectTransform, 18f, 58f, 18f, 58f);
+
+            RectTransform desktopRect = CreateRect("Desktop", window);
+            Stretch(desktopRect, 18f, 58f, 18f, 22f);
+            desktopImage = desktopRect.gameObject.AddComponent<RawImage>();
+            desktopImage.color = Color.white;
+            desktopImage.gameObject.SetActive(false);
+
+            promptText = CreateText("Prompt", window, 16, TextAnchor.MiddleLeft, new Color(0.90f, 1f, 0.92f, 1f));
+            Stretch(promptText.rectTransform, 18f, 0f, 18f, 16f);
+            promptText.rectTransform.anchorMin = new Vector2(0f, 0f);
+            promptText.rectTransform.anchorMax = new Vector2(1f, 0f);
+            promptText.rectTransform.pivot = new Vector2(0.5f, 0f);
+            promptText.rectTransform.sizeDelta = new Vector2(-36f, 36f);
+            promptText.rectTransform.anchoredPosition = new Vector2(0f, 16f);
+
+            footerText = CreateText("Footer", window, 12, TextAnchor.MiddleRight, new Color(0.50f, 0.64f, 0.58f, 1f));
+            footerText.text = "Esc closes";
+            footerText.rectTransform.anchorMin = new Vector2(0f, 0f);
+            footerText.rectTransform.anchorMax = new Vector2(1f, 0f);
+            footerText.rectTransform.pivot = new Vector2(0.5f, 0f);
+            footerText.rectTransform.sizeDelta = new Vector2(-36f, 14f);
+            footerText.rectTransform.anchoredPosition = new Vector2(0f, 2f);
+        }
+
+        private void EnsureAudioOutput()
+        {
+            if (audioSource != null)
+            {
+                return;
+            }
+
+            try
+            {
+                audioSource = gameObject.AddComponent<AudioSource>();
+                audioSource.playOnAwake = false;
+                audioSource.loop = true;
+                audioSource.spatialBlend = 0f;
+                audioSource.volume = 1f;
+                audioClip = AudioClip.Create(
+                    "YlvaOS VM Audio",
+                    YlvaAudioServer.SampleRate,
+                    YlvaAudioServer.Channels,
+                    YlvaAudioServer.SampleRate,
+                    true,
+                    OnAudioRead,
+                    OnAudioSetPosition);
+                audioSource.clip = audioClip;
+                audioSource.Play();
+            }
+            catch (Exception ex)
+            {
+                if (Plugin.Log != null)
+                {
+                    Plugin.Log.LogWarning("YlvaOS audio output could not be started: " + ex.Message);
+                }
+            }
+        }
+
+        private void StopAudioOutput()
+        {
+            try
+            {
+                if (audioSource != null)
+                {
+                    audioSource.Stop();
+                    audioSource.clip = null;
+                }
+
+                if (audioClip != null)
+                {
+                    UnityEngine.Object.Destroy(audioClip);
+                }
+            }
+            catch
+            {
+            }
+
+            audioSource = null;
+            audioClip = null;
+        }
+
+        private void OnAudioRead(float[] data)
+        {
+            if (machine != null && machine.Vm != null)
+            {
+                machine.Vm.FillAudio(data);
+                return;
+            }
+
+            if (data != null)
+            {
+                Array.Clear(data, 0, data.Length);
+            }
+        }
+
+        private void OnAudioSetPosition(int position)
+        {
+        }
+
+        private void RefreshText()
+        {
+            if (machine == null || bodyText == null || promptText == null || titleText == null || desktopImage == null)
+            {
+                return;
+            }
+
+            bool vmConsoleActive = machine.IsVmConsoleActive;
+            bool desktopMode = machine.IsDesktopMode;
+            if (lastVmConsoleActive != vmConsoleActive || lastDesktopMode != desktopMode)
+            {
+                if (lastDesktopMode && !desktopMode)
+                {
+                    ReleaseAllDesktopKeys();
+                }
+
+                lastVmConsoleActive = vmConsoleActive;
+                lastDesktopMode = desktopMode;
+                Stretch(bodyText.rectTransform, 18f, 58f, 18f, vmConsoleActive ? 22f : 58f);
+                desktopImage.gameObject.SetActive(desktopMode);
+                bodyText.gameObject.SetActive(!desktopMode);
+                promptText.gameObject.SetActive(!vmConsoleActive && !desktopMode);
+            }
+
+            if (!desktopMode)
+            {
+                List<string> lines = machine.GetVisibleLines(YlvaTerminalBuffer.DefaultRows, vmConsoleActive && cursorVisible);
+                bodyText.text = string.Join("\n", lines.ToArray());
+            }
+
+            string visibleInput = machine.IsSecretInput ? new string('*', inputText.Length) : inputText;
+            promptText.text = machine.Prompt + visibleInput + (cursorVisible ? "_" : " ");
+            footerText.text = desktopMode
+                ? "Desktop mode | type Kernel in YlvaOS Terminal to return | close with X"
+                : vmConsoleActive
+                ? "Esc is sent to YlvaOS | close with X | settings: YlvaOS set memory <MiB> / YlvaOS set disk <MiB>"
+                : "Esc closes";
+            titleText.text = machine.WindowTitle;
+        }
+
+        private static bool IsControlDown()
+        {
+            return Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
+        }
+
+        private bool AppendControlKey(StringBuilder builder)
+        {
+            for (KeyCode key = KeyCode.A; key <= KeyCode.Z; key++)
+            {
+                if (Input.GetKeyDown(key))
+                {
+                    int code = ((int)key - (int)KeyCode.A) + 1;
+                    builder.Append((char)code);
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private struct DesktopKeyBinding
+        {
+            public readonly KeyCode Key;
+            public readonly uint KeySym;
+
+            public DesktopKeyBinding(KeyCode key, uint keySym)
+            {
+                Key = key;
+                KeySym = keySym;
+            }
+        }
+
+        private Text CreateText(string name, RectTransform parent, int fontSize, TextAnchor alignment, Color color)
+        {
+            RectTransform rect = CreateRect(name, parent);
+            Text text = rect.gameObject.AddComponent<Text>();
+            text.font = font;
+            text.fontSize = fontSize;
+            text.color = color;
+            text.alignment = alignment;
+            text.horizontalOverflow = HorizontalWrapMode.Wrap;
+            text.verticalOverflow = VerticalWrapMode.Truncate;
+            text.supportRichText = false;
+            return text;
+        }
+
+        private Button CreateButton(string name, RectTransform parent, string label)
+        {
+            RectTransform rect = CreateRect(name, parent);
+            Image image = rect.gameObject.AddComponent<Image>();
+            image.color = new Color(0.15f, 0.20f, 0.20f, 1f);
+            Button button = rect.gameObject.AddComponent<Button>();
+            button.targetGraphic = image;
+
+            Text text = CreateText("Label", rect, 16, TextAnchor.MiddleCenter, new Color(0.92f, 1f, 0.94f, 1f));
+            Stretch(text.rectTransform, 0f, 0f, 0f, 0f);
+            text.text = label;
+            return button;
+        }
+
+        private static Font ResolveFont()
+        {
+            try
+            {
+                if (SkinManager.Instance != null && SkinManager.Instance.FontList != null && SkinManager.Instance.FontList.Count > 0 && SkinManager.Instance.FontList[0].font != null)
+                {
+                    return SkinManager.Instance.FontList[0].font;
+                }
+            }
+            catch
+            {
+            }
+
+            return Resources.GetBuiltinResource<Font>("Arial.ttf");
+        }
+
+        private static Font ResolveTerminalFont()
+        {
+            try
+            {
+                Font terminal = Font.CreateDynamicFontFromOSFont(
+                    new[] { "Consolas", "MS Gothic", "Courier New", "Lucida Console" },
+                    16);
+                if (terminal != null)
+                {
+                    return terminal;
+                }
+            }
+            catch
+            {
+            }
+
+            return Resources.GetBuiltinResource<Font>("Arial.ttf");
+        }
+
+        private static RectTransform CreateRect(string name, RectTransform parent)
+        {
+            GameObject obj = new GameObject(name, typeof(RectTransform));
+            RectTransform rect = obj.GetComponent<RectTransform>();
+            rect.SetParent(parent, worldPositionStays: false);
+            return rect;
+        }
+
+        private static void Stretch(RectTransform rect, float left, float top, float right, float bottom)
+        {
+            rect.anchorMin = Vector2.zero;
+            rect.anchorMax = Vector2.one;
+            rect.offsetMin = new Vector2(left, bottom);
+            rect.offsetMax = new Vector2(-right, -top);
+        }
+    }
+}
