@@ -7,14 +7,13 @@ namespace YlvaOS
     {
         public YlvaState()
         {
-            SchemaVersion = 2;
+            SchemaVersion = 3;
             MachineId = "ylva";
             HostName = "ylva";
             UserName = string.Empty;
             WorkingDirectory = "/";
             ScreenLines = new List<string>();
             History = new List<string>();
-            Files = new List<YlvaVfsEntry>();
             CurrentInput = string.Empty;
             PendingUserName = string.Empty;
             PasswordSalt = string.Empty;
@@ -42,20 +41,17 @@ namespace YlvaOS
         public DateTime LastBootUtc { get; set; }
         public List<string> ScreenLines { get; set; }
         public List<string> History { get; set; }
-        public List<YlvaVfsEntry> Files { get; set; }
 
         public static YlvaState CreateDefault()
         {
-            YlvaState state = new YlvaState();
-            state.Files = YlvaVfs.CreateDefaultEntries();
-            return state;
+            return new YlvaState();
         }
 
         public void Normalize()
         {
-            if (SchemaVersion < 2)
+            if (SchemaVersion < 3)
             {
-                SchemaVersion = 2;
+                SchemaVersion = 3;
             }
 
             if (string.IsNullOrEmpty(MachineId))
@@ -108,11 +104,6 @@ namespace YlvaOS
                 History = new List<string>();
             }
 
-            if (Files == null)
-            {
-                Files = new List<YlvaVfsEntry>();
-            }
-
             if (Phase == YlvaBootPhase.None)
             {
                 Phase = SetupComplete ? YlvaBootPhase.LoginUserName : YlvaBootPhase.SetupUserName;
@@ -140,15 +131,5 @@ namespace YlvaOS
         Kernel = 0,
         DesktopStarting = 1,
         Desktop = 2
-    }
-
-    internal sealed class YlvaVfsEntry
-    {
-        public string Path { get; set; }
-        public bool IsDirectory { get; set; }
-        public bool Executable { get; set; }
-        public string Content { get; set; }
-        public byte[] Data { get; set; }
-        public DateTime ModifiedUtc { get; set; }
     }
 }

@@ -27,10 +27,14 @@ namespace YlvaOS
         private string controlToken = string.Empty;
         private YlvaControlServer controlServer;
         private YlvaAudioServer audioServer;
+        private YlvaHostInputServer hostInputServer;
+        private YlvaQmpClient qmpClient;
         private YlvaVncClient vncClient;
         private int vncDisplay = -1;
         private int vncPort;
+        private int qmpPort;
         private bool exitedSinceLastStart;
+        private bool networkConnected;
 
         public YlvaVmBackend(string rootDirectory, string pluginDirectory, ManualLogSource log)
         {
@@ -52,6 +56,11 @@ namespace YlvaOS
         public int VncPort
         {
             get { return vncPort; }
+        }
+
+        public int QmpPort
+        {
+            get { return qmpPort; }
         }
 
         public bool IsRunning
@@ -267,6 +276,31 @@ namespace YlvaOS
             }
         }
 
+        public bool TryPasteTextToDesktop(string text, out string message)
+        {
+            if (!IsRunning)
+            {
+                message = "VM is not running.";
+                return false;
+            }
+
+            if (hostInputServer == null)
+            {
+                message = "YlvaOS host input channel is unavailable.";
+                return false;
+            }
+
+            string normalized = (text ?? string.Empty).Replace("\r\n", "\n").Replace('\r', '\n');
+            if (normalized.Length == 0)
+            {
+                message = "paste text is empty.";
+                return false;
+            }
+
+            string payload = Convert.ToBase64String(Encoding.UTF8.GetBytes(normalized));
+            return hostInputServer.TrySendCommand("paste-b64 " + payload, out message);
+        }
+
         public void FillAudio(float[] output)
         {
             if (audioServer != null)
@@ -335,8 +369,12 @@ namespace YlvaOS
                 controlServer.Start();
                 audioServer = new YlvaAudioServer(log);
                 audioServer.Start();
+                hostInputServer = new YlvaHostInputServer(controlToken, log);
+                hostInputServer.Start();
                 vncDisplay = FindAvailableVncDisplay();
                 vncPort = 5900 + vncDisplay;
+                qmpPort = FindAvailableTcpPort();
+                networkConnected = false;
                 EnsureDiskSize(paths);
                 ProcessStartInfo info = CreateQemuStartInfo(paths);
                 Process next = new Process();
@@ -358,6 +396,8 @@ namespace YlvaOS
                 {
                     process = next;
                 }
+
+                WarmQmpConnection();
 
                 message = "Starting YlvaOS VM with " + config.MemoryMiB + " MiB RAM, " + config.DiskMiB + " MiB disk, and VNC display :" + vncDisplay + ".";
                 lastMessage = message;
@@ -429,6 +469,90 @@ namespace YlvaOS
 
                 process.StandardInput.Write(text ?? string.Empty);
                 process.StandardInput.Flush();
+            }
+        }
+
+        public bool TryConnectNetwork(out string message)
+        {
+            int port;
+            lock (processLock)
+            {
+                if (process == null || process.HasExited)
+                {
+                    message = "VM is not running.";
+                    lastMessage = message;
+                    return false;
+                }
+
+                if (networkConnected)
+                {
+                    message = "YlvaOS network is already connected.";
+                    lastMessage = message;
+                    return true;
+                }
+
+                port = qmpPort;
+            }
+
+            if (port <= 0)
+            {
+                message = "QMP control port is unavailable.";
+                lastMessage = message;
+                return false;
+            }
+
+            if (qmpClient == null)
+            {
+                qmpClient = new YlvaQmpClient();
+            }
+
+            string qmpMessage;
+            if (!qmpClient.TryConnect("127.0.0.1", port, 5000, out qmpMessage))
+            {
+                message = "Failed to connect to QMP: " + qmpMessage;
+                lastMessage = message;
+                return false;
+            }
+
+            if (!qmpClient.TryEnableUserNetwork(out qmpMessage))
+            {
+                message = "Failed to enable YlvaOS network: " + qmpMessage;
+                lastMessage = message;
+                return false;
+            }
+
+            networkConnected = true;
+            message = qmpMessage;
+            lastMessage = message;
+            return true;
+        }
+
+        private void WarmQmpConnection()
+        {
+            if (qmpPort <= 0)
+            {
+                return;
+            }
+
+            try
+            {
+                if (qmpClient == null)
+                {
+                    qmpClient = new YlvaQmpClient();
+                }
+
+                string message;
+                if (!qmpClient.TryConnect("127.0.0.1", qmpPort, 1000, out message) && log != null)
+                {
+                    log.LogWarning("YlvaOS QMP preconnect failed: " + message);
+                }
+            }
+            catch (Exception ex)
+            {
+                if (log != null)
+                {
+                    log.LogWarning("YlvaOS QMP preconnect failed: " + ex.Message);
+                }
             }
         }
 
@@ -742,6 +866,7 @@ namespace YlvaOS
                 " -device usb-tablet" +
                 " -serial stdio" +
                 " -monitor none" +
+                " -qmp tcp:127.0.0.1:" + qmpPort + ",server=on,wait=off" +
                 " -no-reboot" +
                 " -net none" +
                 " -drive file=\"" + paths.DiskPath + "\",if=virtio,format=qcow2" +
@@ -751,6 +876,8 @@ namespace YlvaOS
                 " -device virtserialport,chardev=ylva_ctl,name=org.ylvaos.control" +
                 " -chardev socket,id=ylva_audio,host=127.0.0.1,port=" + (audioServer != null ? audioServer.Port : 0) + ",server=off,reconnect-ms=1000" +
                 " -device virtserialport,chardev=ylva_audio,name=org.ylvaos.audio" +
+                " -chardev socket,id=ylva_hostinput,host=127.0.0.1,port=" + (hostInputServer != null ? hostInputServer.Port : 0) + ",server=off,reconnect-ms=1000" +
+                " -device virtserialport,chardev=ylva_hostinput,name=org.ylvaos.hostinput" +
                 " -kernel \"" + paths.KernelPath + "\"" +
                 " -initrd \"" + paths.InitrdPath + "\"" +
                 " -append \"" + append + "\"";
@@ -876,6 +1003,28 @@ namespace YlvaOS
 
             try
             {
+                if (qmpClient != null)
+                {
+                    qmpClient.Dispose();
+                }
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                if (hostInputServer != null)
+                {
+                    hostInputServer.Dispose();
+                }
+            }
+            catch
+            {
+            }
+
+            try
+            {
                 if (controlServer != null)
                 {
                     controlServer.Dispose();
@@ -885,7 +1034,9 @@ namespace YlvaOS
             {
             }
 
+            qmpClient = null;
             vncClient = null;
+            hostInputServer = null;
             controlServer = null;
             try
             {
@@ -901,7 +1052,23 @@ namespace YlvaOS
             audioServer = null;
             vncDisplay = -1;
             vncPort = 0;
+            qmpPort = 0;
+            networkConnected = false;
             controlToken = string.Empty;
+        }
+
+        private static int FindAvailableTcpPort()
+        {
+            TcpListener probe = new TcpListener(IPAddress.Loopback, 0);
+            try
+            {
+                probe.Start();
+                return ((IPEndPoint)probe.LocalEndpoint).Port;
+            }
+            finally
+            {
+                probe.Stop();
+            }
         }
 
         private static int FindAvailableVncDisplay()

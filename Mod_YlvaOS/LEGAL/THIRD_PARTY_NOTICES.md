@@ -85,6 +85,7 @@ The generated root disk adds small YlvaOS integration scripts:
 - `/usr/bin/ylva-audio-test`
 - `/usr/bin/ylva-wine-init`
 - `/usr/bin/Elona`
+- `/usr/bin/Terminal`
 - `/usr/bin/Desktop`
 - `/usr/bin/Kernel`
 - `/usr/bin/YlvaOS`

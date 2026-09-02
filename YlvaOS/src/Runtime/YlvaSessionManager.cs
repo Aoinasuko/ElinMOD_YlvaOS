@@ -117,8 +117,6 @@ namespace YlvaOS
                     state.Authenticated = false;
                     state.PoweredOff = true;
                 }
-
-                new YlvaVfs(state).EnsureDefaultTree();
             }
             catch (Exception ex)
             {

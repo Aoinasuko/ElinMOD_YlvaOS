@@ -10,6 +10,7 @@ namespace YlvaOS
     internal sealed class LayerYlvaOs : ELayer
     {
         private const int MaxInputLength = 256;
+        private const int MaxClipboardPasteLength = 4096;
         private static readonly DesktopKeyBinding[] DesktopKeyBindings = new DesktopKeyBinding[]
         {
             new DesktopKeyBinding(KeyCode.LeftShift, 0xffe1),
@@ -198,6 +199,11 @@ namespace YlvaOS
                 return;
             }
 
+            if (TryPasteClipboardIntoCommandInput())
+            {
+                return;
+            }
+
             if (Input.GetKeyDown(KeyCode.UpArrow))
             {
                 RecallHistory(-1);
@@ -341,6 +347,12 @@ namespace YlvaOS
             try
             {
                 StringBuilder builder = new StringBuilder(32);
+
+                if (TryAppendClipboardForVm(builder))
+                {
+                    SendVmBatch(builder);
+                    return;
+                }
 
                 if (Input.GetKeyDown(KeyCode.Escape))
                 {
@@ -506,6 +518,11 @@ namespace YlvaOS
 
         private void HandleDesktopKeyboard()
         {
+            if (TryPasteClipboardToDesktop())
+            {
+                return;
+            }
+
             foreach (DesktopKeyBinding binding in DesktopKeyBindings)
             {
                 SendDesktopKeyTransition(binding.Key, binding.KeySym);
@@ -688,6 +705,212 @@ namespace YlvaOS
             lastDesktopButtonMask = -1;
             lastDesktopMouseX = -1;
             lastDesktopMouseY = -1;
+        }
+
+        private bool TryPasteClipboardIntoCommandInput()
+        {
+            if (machine == null || !IsPasteShortcutDown())
+            {
+                return false;
+            }
+
+            string text;
+            if (!TryReadClipboardText(out text))
+            {
+                return true;
+            }
+
+            bool changed = false;
+            foreach (int codePoint in EnumerateCodePoints(NormalizeLineEndings(text)))
+            {
+                if (inputText.Length >= MaxInputLength)
+                {
+                    break;
+                }
+
+                if (codePoint == '\n' || codePoint == '\r' || codePoint == '\t')
+                {
+                    inputText += " ";
+                    changed = true;
+                    continue;
+                }
+
+                if (codePoint >= 0x20 && codePoint != 0x7f)
+                {
+                    inputText += char.ConvertFromUtf32(codePoint);
+                    changed = true;
+                }
+            }
+
+            if (changed)
+            {
+                historyCursor = -1;
+                machine.CurrentInput = inputText;
+                RefreshText();
+            }
+
+            return true;
+        }
+
+        private bool TryAppendClipboardForVm(StringBuilder builder)
+        {
+            if (!IsPasteShortcutDown())
+            {
+                return false;
+            }
+
+            string text;
+            if (!TryReadClipboardText(out text))
+            {
+                return true;
+            }
+
+            foreach (int codePoint in EnumerateCodePoints(NormalizeLineEndings(text)))
+            {
+                if (codePoint == '\n')
+                {
+                    builder.Append("\r\n");
+                    continue;
+                }
+
+                if (codePoint == '\b' || codePoint == 0x7f)
+                {
+                    builder.Append('\u007f');
+                    continue;
+                }
+
+                if (codePoint == '\t')
+                {
+                    builder.Append('\t');
+                    continue;
+                }
+
+                if (codePoint >= 0x20)
+                {
+                    builder.Append(char.ConvertFromUtf32(codePoint));
+                }
+            }
+
+            return true;
+        }
+
+        private bool TryPasteClipboardToDesktop()
+        {
+            if (!IsPasteShortcutDown())
+            {
+                return false;
+            }
+
+            string text;
+            if (!TryReadClipboardText(out text))
+            {
+                return true;
+            }
+
+            ReleaseAllDesktopKeys();
+            string message = string.Empty;
+            if (machine != null && machine.TryPasteTextToDesktop(NormalizeLineEndings(text), out message))
+            {
+                return true;
+            }
+
+            if (Plugin.Log != null && !string.IsNullOrEmpty(message))
+            {
+                Plugin.Log.LogWarning("YlvaOS desktop paste fell back to VNC key events: " + message);
+            }
+
+            foreach (int codePoint in EnumerateCodePoints(NormalizeLineEndings(text)))
+            {
+                if (codePoint == '\n')
+                {
+                    SendDesktopKeyPress(0xff0d);
+                    continue;
+                }
+
+                if (codePoint == '\b' || codePoint == 0x7f)
+                {
+                    SendDesktopKeyPress(0xff08);
+                    continue;
+                }
+
+                if (codePoint == '\t')
+                {
+                    SendDesktopKeyPress(0xff09);
+                    continue;
+                }
+
+                uint keySym = ToVncTextKeySym(codePoint);
+                if (keySym != 0)
+                {
+                    SendDesktopKeyPress(keySym);
+                }
+            }
+
+            return true;
+        }
+
+        private static bool TryReadClipboardText(out string text)
+        {
+            text = string.Empty;
+            try
+            {
+                text = GUIUtility.systemCopyBuffer ?? string.Empty;
+            }
+            catch
+            {
+                return false;
+            }
+
+            if (text.Length > MaxClipboardPasteLength)
+            {
+                text = text.Substring(0, MaxClipboardPasteLength);
+            }
+
+            return text.Length > 0;
+        }
+
+        private static string NormalizeLineEndings(string text)
+        {
+            return (text ?? string.Empty).Replace("\r\n", "\n").Replace('\r', '\n');
+        }
+
+        private static IEnumerable<int> EnumerateCodePoints(string text)
+        {
+            if (string.IsNullOrEmpty(text))
+            {
+                yield break;
+            }
+
+            for (int index = 0; index < text.Length; index++)
+            {
+                char ch = text[index];
+                if (char.IsHighSurrogate(ch) && index + 1 < text.Length && char.IsLowSurrogate(text[index + 1]))
+                {
+                    yield return char.ConvertToUtf32(ch, text[index + 1]);
+                    index++;
+                    continue;
+                }
+
+                if (!char.IsSurrogate(ch))
+                {
+                    yield return ch;
+                }
+            }
+        }
+
+        private static uint ToVncTextKeySym(int codePoint)
+        {
+            if (codePoint >= 0x20 && codePoint <= 0xff)
+            {
+                return (uint)codePoint;
+            }
+
+            if (codePoint > 0xff && codePoint <= 0x10ffff)
+            {
+                return 0x01000000u | (uint)codePoint;
+            }
+
+            return 0;
         }
 
         private void SubmitCommand()
@@ -921,15 +1144,16 @@ namespace YlvaOS
             if (!desktopMode)
             {
                 List<string> lines = machine.GetVisibleLines(YlvaTerminalBuffer.DefaultRows, vmConsoleActive && cursorVisible);
+                bodyText.supportRichText = machine.VisibleLinesUseRichText;
                 bodyText.text = string.Join("\n", lines.ToArray());
             }
 
             string visibleInput = machine.IsSecretInput ? new string('*', inputText.Length) : inputText;
             promptText.text = machine.Prompt + visibleInput + (cursorVisible ? "_" : " ");
             footerText.text = desktopMode
-                ? "Desktop mode | type Kernel in YlvaOS Terminal to return | close with X"
+                ? "Desktop mode | Ctrl+V paste | Ctrl+Alt+T terminal | Ctrl+Alt+K or Kernel returns | close with X"
                 : vmConsoleActive
-                ? "Esc is sent to YlvaOS | close with X | settings: YlvaOS set memory <MiB> / YlvaOS set disk <MiB>"
+                ? "Esc is sent to YlvaOS | Ctrl+V paste | ConnectNetwork enables Internet after yes | close with X"
                 : "Esc closes";
             titleText.text = machine.WindowTitle;
         }
@@ -937,6 +1161,11 @@ namespace YlvaOS
         private static bool IsControlDown()
         {
             return Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
+        }
+
+        private static bool IsPasteShortcutDown()
+        {
+            return IsControlDown() && Input.GetKeyDown(KeyCode.V);
         }
 
         private bool AppendControlKey(StringBuilder builder)

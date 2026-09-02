@@ -342,6 +342,8 @@ YlvaOS quick notes
 - The root disk lives under LocalLow/Lafrontier/Elin/YlvaOS/vm/disk.qcow2 after the MOD provisions it.
 - Put host files in LocalLow/Lafrontier/Elin/YlvaOS/Import to expose them as a read-only guest drive.
 - QEMU runtime networking is disabled by default in the MOD backend.
+- Run ConnectNetwork and type yes to enable QEMU user-mode networking for this VM session.
+- After connecting, use doas apk update and doas apk add <package> to install packages.
 - Use poweroff to shut down the VM.
 EOF
 chown 1000:1000 /mnt/home/ylva/README.txt
@@ -379,7 +381,7 @@ case "$cols" in ''|*[!0-9]* ) cols=140 ;; esac
 resize2fs /dev/vda >/dev/null 2>&1 || true
 for _ in 1 2 3 4 5; do
     found_port=0
-    for port in /dev/virtio-ports/org.ylvaos.control /dev/virtio-ports/org.ylvaos.audio; do
+    for port in /dev/virtio-ports/org.ylvaos.control /dev/virtio-ports/org.ylvaos.audio /dev/virtio-ports/org.ylvaos.hostinput; do
         if [ -e "$port" ]; then
             chmod 0666 "$port" >/dev/null 2>&1 || true
             found_port=1
@@ -416,12 +418,21 @@ fi
 
 cat >"/home/$user/.profile" <<EOF_PROFILE
 export PATH=/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+export LANG=C.UTF-8
+export LC_CTYPE=C.UTF-8
 export TERM=vt100
 stty rows $rows cols $cols -ixon 2>/dev/null || true
 export XDG_RUNTIME_DIR="/tmp/ylva-runtime-$user"
 mkdir -p "/tmp/ylva-runtime-$user" 2>/dev/null || true
 chmod 700 "/tmp/ylva-runtime-$user" 2>/dev/null || true
 ylva-start-audio >/tmp/ylva-audio.log 2>&1 || true
+if command -v ylva-host-agent >/dev/null 2>&1 && ! pgrep -u "\$(id -u)" -f '[y]lva-host-agent' >/dev/null 2>&1; then
+    ylva-host-agent >/tmp/ylva-host-agent.log 2>&1 &
+fi
+if [ "\${YLVA_SPLASH_SHOWN:-0}" != 1 ]; then
+    export YLVA_SPLASH_SHOWN=1
+    ylva-splash 2>/dev/null || true
+fi
 export PS1='YlvaOS:\w\$ '
 alias poweroff='doas poweroff'
 alias reboot='doas reboot'
@@ -435,6 +446,8 @@ chmod 0755 /mnt/sbin/ylva-getty
 
 cat >/mnt/etc/profile.d/ylvaos-terminal.sh <<'EOF'
 export PATH=/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+export LANG=C.UTF-8
+export LC_CTYPE=C.UTF-8
 export TERM=vt100
 stty rows 32 cols 140 -ixon 2>/dev/null || true
 EOF
@@ -476,6 +489,196 @@ if [ -n "$message" ]; then
 fi
 EOF
 chmod 0755 /mnt/usr/bin/ylva-control
+
+cat >/mnt/usr/bin/ylva-splash <<'EOF'
+#!/bin/sh
+set -u
+
+version="0.1.0"
+if [ -t 1 ]; then
+    white="$(printf '\\033[97m')"
+    green="$(printf '\\033[92m')"
+    reset="$(printf '\\033[0m')"
+else
+    white=""
+    green=""
+    reset=""
+fi
+
+border="--------------------------------------------------------------------------------"
+splash_line() {
+    printf '| %s%-24s%s   %s%-51s%s |\\n' "$white" "$1" "$reset" "$green" "$2" "$reset"
+}
+
+printf '+%s+\\n' "$border"
+splash_line '       ____             ' ' __   __ _             ___  ____'
+splash_line "    .-'    '-.          " ' \\ \\ / /| |_   ____ _ / _ \\/ ___|'
+splash_line '   /  o    o  \\         ' '  \\ V / | | \\ \\ / / _` | | | \\___ \\ '
+splash_line '  |     __     |        ' '   | |  | |  \\ V / (_| | |_| |___) |'
+splash_line "   \\   '--'   /         " '   |_|  |_|   \\_/ \\__,_|\\___/|____/'
+splash_line "    '._    _.'          " '                                                   '
+splash_line "       '--'             " '                                                   '
+printf '| %-78s |\\n' "ver $version"
+printf '+%s+\\n' "$border"
+EOF
+chmod 0755 /mnt/usr/bin/ylva-splash
+
+cat >/mnt/usr/bin/ylva-host-agent <<'EOF'
+#!/bin/sh
+set -u
+export PATH=/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+export LANG="${LANG:-C.UTF-8}"
+export LC_CTYPE="${LC_CTYPE:-C.UTF-8}"
+
+get_arg() {
+    name="$1"
+    for arg in $(cat /proc/cmdline); do
+        case "$arg" in
+            "$name="*) printf '%s' "$(printf '%s' "$arg" | sed "s/^$name=//")"; return ;;
+        esac
+    done
+}
+
+paste_base64() {
+    payload="$1"
+    tmp="${TMPDIR:-/tmp}/ylva-paste.$$"
+    rm -f "$tmp"
+    if ! printf '%s' "$payload" | base64 -d >"$tmp" 2>/dev/null; then
+        rm -f "$tmp"
+        return 1
+    fi
+
+    if [ -S /tmp/.X11-unix/X0 ] && command -v xdotool >/dev/null 2>&1; then
+        display="${DISPLAY:-:0}"
+        xauthority="${XAUTHORITY:-$HOME/.Xauthority}"
+        DISPLAY="$display" XAUTHORITY="$xauthority" xdotool type --clearmodifiers --delay 0 --file "$tmp" >/dev/null 2>&1 ||
+            DISPLAY=:0 xdotool type --clearmodifiers --delay 0 --file "$tmp" >/dev/null 2>&1 ||
+            true
+    fi
+
+    rm -f "$tmp"
+}
+
+handle_line() {
+    line="$1"
+    prefix="YLVAOS_HOST $token "
+    case "$line" in
+        "${prefix}"*) body="${line#"$prefix"}" ;;
+        *) return ;;
+    esac
+
+    case "$body" in
+        paste-b64\ *)
+            paste_base64 "${body#paste-b64 }"
+            ;;
+    esac
+}
+
+token="$(get_arg ylva_control_token)"
+port=/dev/virtio-ports/org.ylvaos.hostinput
+ready_sent=0
+
+while :; do
+    if [ -z "$token" ] || [ ! -e "$port" ]; then
+        ready_sent=0
+        sleep 1
+        continue
+    fi
+
+    if [ ! -r "$port" ] && [ "$(id -u)" -ne 0 ]; then
+        doas chmod 0666 "$port" >/dev/null 2>&1 || true
+    fi
+
+    if [ "$ready_sent" != 1 ]; then
+        printf 'YLVAOS_HOST %s ready\n' "$token" >"$port" 2>/dev/null && ready_sent=1 || true
+    fi
+
+    if IFS= read -r line <"$port"; then
+        handle_line "$line"
+    else
+        ready_sent=0
+        sleep 1
+    fi
+done
+EOF
+chmod 0755 /mnt/usr/bin/ylva-host-agent
+
+cat >/mnt/usr/bin/ConnectNetwork <<'EOF'
+#!/bin/sh
+set -u
+export PATH=/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+
+as_root() {
+    if [ "$(id -u)" -eq 0 ]; then
+        "$@"
+    else
+        doas "$@"
+    fi
+}
+
+find_iface() {
+    for path in /sys/class/net/*; do
+        name="${path##*/}"
+        if [ "$name" != lo ]; then
+            printf '%s\n' "$name"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+cat <<'WARN'
+WARNING: ConnectNetwork enables Internet access for the YlvaOS guest through QEMU user-mode networking.
+
+Guest programs may contact remote servers, download and run code, expose information typed inside YlvaOS, and increase the attack surface of this MOD sandbox.
+Host filesystem access is still limited to the YlvaOS virtual disk and the read-only Import drive, but malicious guest software can damage or exfiltrate data inside the VM.
+Only continue if you understand Linux networking and trust the commands you will run.
+
+Type "yes" to enable networking:
+WARN
+printf '> '
+IFS= read -r answer || answer=
+if [ "$answer" != yes ]; then
+    echo "ConnectNetwork cancelled."
+    exit 1
+fi
+
+echo "Requesting a network adapter from the Elin MOD host..."
+if ! ylva-control network connect; then
+    echo "Failed to request networking from the MOD host."
+    exit 1
+fi
+
+as_root modprobe virtio_net >/dev/null 2>&1 || true
+
+iface=
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do
+    iface="$(find_iface 2>/dev/null || true)"
+    if [ -n "$iface" ]; then
+        break
+    fi
+    sleep 1
+done
+
+if [ -z "$iface" ]; then
+    echo "No YlvaOS network interface appeared."
+    exit 1
+fi
+
+echo "Configuring $iface with DHCP..."
+as_root ip link set "$iface" up >/dev/null 2>&1 || as_root ifconfig "$iface" up >/dev/null 2>&1 || true
+if as_root udhcpc -i "$iface" -n -q -t 10; then
+    echo "YlvaOS networking is connected through QEMU user-mode NAT."
+    echo "You can now run commands such as: doas apk update"
+    exit 0
+fi
+
+echo "DHCP failed on $iface."
+exit 1
+EOF
+chmod 0755 /mnt/usr/bin/ConnectNetwork
+ln -sf /usr/bin/ConnectNetwork /mnt/usr/bin/connectnetwork
 
 cat >/mnt/etc/asound.conf <<'EOF'
 pcm.!default {
@@ -614,6 +817,24 @@ EOF
 chmod 0755 /mnt/usr/bin/Elona
 ln -sf /usr/bin/Elona /mnt/usr/bin/elona
 
+cat >/mnt/usr/bin/Terminal <<'EOF'
+#!/bin/sh
+set -u
+export PATH=/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+export DISPLAY="${DISPLAY:-:0}"
+
+title="${1:-YlvaOS Terminal}"
+xterm -title "$title" -geometry 100x28+36+56 &
+
+(sleep 1
+win="$(xdotool search --name "$title" 2>/dev/null | tail -n 1)"
+if [ -n "$win" ]; then
+    xdotool windowactivate "$win" windowfocus "$win" >/dev/null 2>&1 || true
+fi) >/dev/null 2>&1 &
+EOF
+chmod 0755 /mnt/usr/bin/Terminal
+ln -sf /usr/bin/Terminal /mnt/usr/bin/terminal
+
 cat >/mnt/usr/local/bin/ylva-desktop-session <<'EOF'
 #!/bin/sh
 set -u
@@ -649,6 +870,8 @@ XTerm*background: #07110f
 XTerm*foreground: #d4f8dc
 XTerm*cursorColor: #d4f8dc
 XTerm*scrollBar: false
+XTerm*utf8: true
+XTerm*locale: true
 EOF_XRES
 xrdb "$home/.Xresources" 2>/dev/null || true
 
@@ -663,14 +886,55 @@ cat >"$home/.config/openbox/rc.xml" <<'EOF_OBRC'
     <focusLast>yes</focusLast>
     <underMouse>yes</underMouse>
   </focus>
+  <keyboard>
+    <keybind key="C-A-t">
+      <action name="Execute">
+        <command>Terminal</command>
+      </action>
+    </keybind>
+    <keybind key="C-A-k">
+      <action name="Execute">
+        <command>Kernel</command>
+      </action>
+    </keybind>
+  </keyboard>
+  <mouse>
+    <context name="Root">
+      <mousebind button="Right" action="Press">
+        <action name="ShowMenu">
+          <menu>root-menu</menu>
+        </action>
+      </mousebind>
+    </context>
+  </mouse>
+  <menu>
+    <file>menu.xml</file>
+  </menu>
 </openbox_config>
 EOF_OBRC
+
+cat >"$home/.config/openbox/menu.xml" <<'EOF_OBMENU'
+<?xml version="1.0" encoding="UTF-8"?>
+<openbox_menu xmlns="http://openbox.org/3.4/menu">
+  <menu id="root-menu" label="YlvaOS">
+    <item label="Terminal">
+      <action name="Execute">
+        <command>Terminal</command>
+      </action>
+    </item>
+    <item label="Return to Kernel">
+      <action name="Execute">
+        <command>Kernel</command>
+      </action>
+    </item>
+  </menu>
+</openbox_menu>
+EOF_OBMENU
 
 cat >"$home/.config/openbox/autostart" <<'EOF_AUTOSTART'
 xsetroot -solid '#12211f' &
 tint2 &
-xterm -title "YlvaOS Terminal" -geometry 100x28+36+56 &
-(sleep 1; win="$(xdotool search --name 'YlvaOS Terminal' | head -n 1)"; [ -n "$win" ] && xdotool windowactivate "$win" windowfocus "$win") >/dev/null 2>&1 &
+Terminal &
 EOF_AUTOSTART
 chmod 0755 "$home/.config/openbox/autostart" 2>/dev/null || true
 

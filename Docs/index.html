@@ -1,0 +1,363 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>YlvaOS Help</title>
+  <meta name="description" content="YlvaOS MOD commands and usage guide for Elin.">
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #07100f;
+      --panel: #0e1c1a;
+      --panel-2: #132622;
+      --text: #e9fff3;
+      --muted: #a7c5b5;
+      --line: #2a4b42;
+      --green: #70f2a4;
+      --blue: #8fc7ff;
+      --amber: #ffc978;
+      --red: #ff9b9b;
+      --shadow: rgba(0, 0, 0, 0.35);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+      line-height: 1.65;
+    }
+
+    a {
+      color: var(--blue);
+      text-decoration: none;
+    }
+
+    a:hover {
+      text-decoration: underline;
+    }
+
+    header {
+      border-bottom: 1px solid var(--line);
+      background: #0a1715;
+    }
+
+    .wrap {
+      width: min(1120px, calc(100% - 32px));
+      margin: 0 auto;
+    }
+
+    .top {
+      display: grid;
+      grid-template-columns: 1.1fr 0.9fr;
+      gap: 28px;
+      align-items: end;
+      padding: 48px 0 28px;
+    }
+
+    h1, h2, h3 {
+      line-height: 1.2;
+      margin: 0;
+      letter-spacing: 0;
+    }
+
+    h1 {
+      font-size: clamp(2rem, 7vw, 4.8rem);
+      color: var(--green);
+    }
+
+    h2 {
+      font-size: 1.55rem;
+      margin-bottom: 14px;
+    }
+
+    h3 {
+      font-size: 1rem;
+      color: var(--amber);
+      margin-bottom: 8px;
+    }
+
+    .lead {
+      max-width: 64ch;
+      color: var(--muted);
+      font-size: 1.05rem;
+      margin: 16px 0 0;
+    }
+
+    nav {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      padding: 16px 0 22px;
+    }
+
+    nav a {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      color: var(--text);
+      padding: 8px 11px;
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    main {
+      padding: 28px 0 56px;
+    }
+
+    section {
+      padding: 24px 0;
+      border-bottom: 1px solid rgba(42, 75, 66, 0.65);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px;
+      box-shadow: 0 12px 34px var(--shadow);
+    }
+
+    .card strong {
+      display: block;
+      color: var(--green);
+      margin-bottom: 6px;
+    }
+
+    .command-list {
+      display: grid;
+      grid-template-columns: minmax(220px, 0.35fr) 1fr;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      background: var(--panel);
+    }
+
+    .command-list div {
+      padding: 12px 14px;
+      border-bottom: 1px solid rgba(42, 75, 66, 0.65);
+    }
+
+    .command-list div:nth-child(odd) {
+      background: var(--panel-2);
+      font-family: Consolas, "Cascadia Mono", monospace;
+      color: var(--green);
+      overflow-wrap: anywhere;
+    }
+
+    .command-list div:nth-last-child(-n + 2) {
+      border-bottom: 0;
+    }
+
+    code, pre {
+      font-family: Consolas, "Cascadia Mono", monospace;
+    }
+
+    code {
+      color: var(--green);
+      background: rgba(112, 242, 164, 0.08);
+      border: 1px solid rgba(112, 242, 164, 0.22);
+      border-radius: 5px;
+      padding: 1px 5px;
+    }
+
+    pre {
+      margin: 12px 0 0;
+      padding: 14px;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      background: #050b0a;
+      color: var(--text);
+      overflow: auto;
+    }
+
+    .note {
+      border-left: 3px solid var(--amber);
+      background: rgba(255, 201, 120, 0.08);
+      padding: 12px 14px;
+      border-radius: 6px;
+      color: #ffe5bc;
+    }
+
+    .danger {
+      border-left-color: var(--red);
+      background: rgba(255, 155, 155, 0.08);
+      color: #ffd2d2;
+    }
+
+    ul {
+      padding-left: 20px;
+      margin: 10px 0 0;
+    }
+
+    footer {
+      color: var(--muted);
+      padding: 28px 0 46px;
+    }
+
+    @media (max-width: 780px) {
+      .top, .grid, .command-list {
+        grid-template-columns: 1fr;
+      }
+
+      .command-list div:nth-last-child(-n + 2) {
+        border-bottom: 1px solid rgba(42, 75, 66, 0.65);
+      }
+
+      .command-list div:last-child {
+        border-bottom: 0;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap top">
+      <div>
+        <h1>YlvaOS</h1>
+        <p class="lead">Elin内のコンピューター家具から起動する、実Linux VMベースの小さなOSです。テキストコンソール、軽量デスクトップ、Wine、Elona起動補助、任意ネットワーク接続を備えています。</p>
+      </div>
+      <pre aria-label="YlvaOS splash">+----------------------------------+
+|  Elin computer  ->  YlvaOS      |
+|  ver 0.1.0       real Linux VM  |
+|  console / desktop / Wine       |
++----------------------------------+</pre>
+    </div>
+    <nav class="wrap" aria-label="ページ内ナビゲーション">
+      <a href="#start">はじめる</a>
+      <a href="#commands">コマンド</a>
+      <a href="#desktop">Desktop</a>
+      <a href="#elona">Elona</a>
+      <a href="#network">Network</a>
+      <a href="#paths">保存場所</a>
+      <a href="#distribution">配布</a>
+    </nav>
+  </header>
+
+  <main class="wrap">
+    <section id="start">
+      <h2>はじめる</h2>
+      <div class="grid">
+        <div class="card">
+          <strong>1. コンピューターを使う</strong>
+          手持ちでも地面に設置した状態でも、Elinのコンピューター家具を使用するとYlvaOSウィンドウが開きます。
+        </div>
+        <div class="card">
+          <strong>2. 初回警告に同意</strong>
+          初回のみ、実Linux互換OSをPC上で動かすことへの警告が表示されます。同意後にセットアップへ進みます。
+        </div>
+        <div class="card">
+          <strong>3. ユーザー作成</strong>
+          ユーザー名とパスワードを入力します。パスワードは空でも構いません。次回以降はログイン画面から始まります。
+        </div>
+      </div>
+      <p class="note">YlvaOSのデータはコンピューターごとではなく全セーブ共通です。LocalLow配下のYlvaOSフォルダに保存されます。</p>
+    </section>
+
+    <section id="commands">
+      <h2>独自コマンド一覧</h2>
+      <div class="command-list">
+        <div>Desktop</div>
+        <div>軽量デスクトップへ切り替えます。Openbox、tint2、xtermを使うGUIモードです。</div>
+        <div>Kernel</div>
+        <div>デスクトップからテキストコンソールへ戻ります。デスクトップ端末内で実行できます。</div>
+        <div>Terminal [title]</div>
+        <div>デスクトップ上にYlvaOS Terminalを開きます。右クリックメニューや <code>Ctrl+Alt+T</code> でも起動できます。</div>
+        <div>YlvaOS status</div>
+        <div>YlvaOSの状態とLinux kernel情報を表示します。</div>
+        <div>YlvaOS set memory &lt;MiB&gt;</div>
+        <div>VMのメモリ割り当てを変更します。反映はYlvaOS再起動後です。例: <code>YlvaOS set memory 4096</code></div>
+        <div>YlvaOS set disk &lt;MiB&gt;</div>
+        <div>仮想ディスクの目標サイズを拡張します。縮小はできません。反映は次回VM起動時です。</div>
+        <div>ConnectNetwork</div>
+        <div>英語のリスク警告を表示し、<code>yes</code> と入力した場合だけ、そのVMセッションでインターネット接続を有効化します。</div>
+        <div>ylva-wine-init</div>
+        <div>Wine prefixと音声経路を初期化します。Elonaを初めて動かす前に実行します。</div>
+        <div>Elona [path]</div>
+        <div>Wine経由でElonaを起動します。引数なしでは <code>~/Elona/elona.exe</code> を探します。</div>
+        <div>ylva-audio-test</div>
+        <div>短いテスト音を鳴らし、YlvaOSからElin経由で音が出るか確認します。</div>
+      </div>
+      <p>小文字エイリアスとして <code>desktop</code>、<code>kernel</code>、<code>terminal</code>、<code>elona</code>、<code>connectnetwork</code> も用意されています。</p>
+    </section>
+
+    <section id="desktop">
+      <h2>Desktop Mode</h2>
+      <p>テキストコンソールで <code>Desktop</code> を実行すると、YlvaOSウィンドウ内に軽量デスクトップが表示されます。入力はElinウィンドウ内からQEMUのVNC/RFB経由でゲストへ送られます。</p>
+      <ul>
+        <li><code>Ctrl+Alt+T</code>: YlvaOS Terminalを開く</li>
+        <li><code>Ctrl+Alt+K</code>: テキストコンソールへ戻る</li>
+        <li><code>Ctrl+V</code>: ホストのクリップボード文字列をYlvaOSへ貼り付ける</li>
+        <li><code>X</code>ボタン: YlvaOSウィンドウを閉じる</li>
+      </ul>
+    </section>
+
+    <section id="elona">
+      <h2>Elonaを入れて起動する</h2>
+      <p>Elona本体は配布条件を確認し、ユーザー自身で用意してください。ホスト側のImportフォルダへElonaフォルダを置くと、YlvaOSから読み取り専用ドライブとして見えます。</p>
+      <pre>C:\Users\&lt;ユーザー名&gt;\AppData\LocalLow\Lafrontier\Elin\YlvaOS\Import\elona</pre>
+      <p>YlvaOS内でコピーする例:</p>
+      <pre>mkdir -p ~/Import
+dev=/dev/vdb1
+[ -b "$dev" ] || dev=/dev/vdb
+doas mount -t vfat -o ro,uid=$(id -u),gid=$(id -g) "$dev" ~/Import
+cp -r ~/Import/elona ~/Elona
+doas umount ~/Import</pre>
+      <p>デスクトップへ入り、Wineを初期化して起動します。</p>
+      <pre>Desktop
+ylva-wine-init
+Elona</pre>
+    </section>
+
+    <section id="network">
+      <h2>Network</h2>
+      <p>YlvaOSは既定でネットワーク無効です。パッケージ追加などで必要なときだけ <code>ConnectNetwork</code> を実行します。</p>
+      <p class="note danger">ネットワークを有効にすると、ゲスト内プログラムが外部サーバーへ接続し、VM内データを変更または送信できるようになります。警告文を読み、理解した場合だけ <code>yes</code> と入力してください。</p>
+      <pre>ConnectNetwork
+doas apk update
+doas apk add &lt;package&gt;</pre>
+    </section>
+
+    <section id="paths">
+      <h2>保存場所</h2>
+      <p>YlvaOSの実行データはElinのLocalLow配下に作られます。別セーブデータでも同じYlvaOSデータを使います。</p>
+      <pre>C:\Users\&lt;ユーザー名&gt;\AppData\LocalLow\Lafrontier\Elin\YlvaOS
+├─ state.json
+├─ vmconfig.json
+├─ vm\disk.qcow2
+├─ vm\assets\vmlinuz
+├─ vm\assets\initrd.img
+├─ Tools\qemu\
+└─ Import\</pre>
+      <p>YlvaOSからホスト全体へアクセスする経路は用意していません。Importフォルダだけを読み取り専用で渡します。</p>
+    </section>
+
+    <section id="distribution">
+      <h2>GitHub公開と配布</h2>
+      <p>公開リポジトリでは、QEMU、kernel/initrd、生成済みroot disk、ローカルElonaコピーは追跡しません。配布時はRelease用zipに必要なランタイムを含めるか、ユーザー向けにビルド手順を案内してください。</p>
+      <ul>
+        <li>rootfs再生成: <code>python .\Tools\build_ylvaos_image.py --force</code></li>
+        <li>MODビルド: <code>dotnet build .\YlvaOS\YlvaOS.csproj -c Release -v:minimal</code></li>
+        <li>第三者ライセンス: <code>Mod_YlvaOS/LEGAL</code> と <code>Mod_YlvaOS/LICENSES</code></li>
+      </ul>
+    </section>
+  </main>
+
+  <footer class="wrap">
+    YlvaOS 0.1.0 / Elin MOD by aoi_nasuko
+  </footer>
+</body>
+</html>

@@ -12,8 +12,6 @@ namespace YlvaOS
         private const int MaxVmOutputChunksPerPump = 96;
 
         private readonly YlvaState state;
-        private readonly YlvaVfs vfs;
-        private readonly YlvaShell shell;
         private readonly YlvaVmBackend vm;
         private readonly YlvaTerminalBuffer terminalBuffer;
 
@@ -28,8 +26,6 @@ namespace YlvaOS
                 YlvaTerminalBuffer.DefaultColumns,
                 HandleHostCommand,
                 SendTerminalResponse);
-            vfs = new YlvaVfs(this.state);
-            shell = new YlvaShell(this, vfs);
         }
 
         public YlvaState State
@@ -140,6 +136,11 @@ namespace YlvaOS
             }
         }
 
+        public bool VisibleLinesUseRichText
+        {
+            get { return terminalBuffer.LastRenderUsedRichText; }
+        }
+
         public void ColdBoot()
         {
             CloseRequested = false;
@@ -153,7 +154,6 @@ namespace YlvaOS
             state.CurrentInput = string.Empty;
             state.DisplayMode = YlvaDisplayMode.Kernel;
             terminalBuffer.Clear();
-            vfs.EnsureDefaultTree();
 
             if (!state.SetupComplete)
             {
@@ -208,7 +208,7 @@ namespace YlvaOS
                     SubmitLoginPassword(command);
                     break;
                 case YlvaBootPhase.Shell:
-                    shell.Execute(trimmed);
+                    ExecuteOfflineCommand(trimmed);
                     break;
                 default:
                     state.Phase = state.SetupComplete ? YlvaBootPhase.LoginUserName : YlvaBootPhase.SetupUserName;
@@ -310,6 +310,17 @@ namespace YlvaOS
             }
         }
 
+        public bool TryPasteTextToDesktop(string text, out string message)
+        {
+            if (IsVmRunning && vm != null)
+            {
+                return vm.TryPasteTextToDesktop(text, out message);
+            }
+
+            message = "VM is not running.";
+            return false;
+        }
+
         public void RequestShutdown()
         {
             if (vm != null && vm.IsRunning)
@@ -361,11 +372,6 @@ namespace YlvaOS
             state.PendingUserName = string.Empty;
             state.WorkingDirectory = "/home/" + userName;
 
-            vfs.MakeDirectory("/", "/home/" + userName, recursive: true);
-            vfs.WriteFile("/", "/etc/passwd", userName + ":x:1000:1000:YlvaOS User:/home/" + userName + ":/bin/ylvash\n", append: false);
-            vfs.WriteFile("/", "/etc/shadow", userName + ":" + state.PasswordHash + ":0:0:99999:7:::\n", append: false);
-            vfs.WriteFile("/", "/home/" + userName + "/README.txt", "Welcome, " + userName + ".\nThis home directory is stored inside ylvafs.\nTry `hello`, `uname`, `file /bin/hello`, and `elfrun /bin/hello`.\n", append: false);
-
             state.Phase = YlvaBootPhase.Shell;
             StartRealYlvaOs(password ?? string.Empty);
         }
@@ -385,7 +391,6 @@ namespace YlvaOS
                 state.Authenticated = true;
                 state.PendingUserName = string.Empty;
                 state.WorkingDirectory = "/home/" + CurrentUserName;
-                vfs.MakeDirectory("/", state.WorkingDirectory, recursive: true);
                 state.Phase = YlvaBootPhase.Shell;
                 StartRealYlvaOs(password ?? string.Empty);
                 return;
@@ -395,6 +400,189 @@ namespace YlvaOS
             state.PendingUserName = string.Empty;
             state.Phase = YlvaBootPhase.LoginUserName;
             Append("Login incorrect");
+        }
+
+        private void ExecuteOfflineCommand(string command)
+        {
+            if (string.IsNullOrWhiteSpace(command))
+            {
+                return;
+            }
+
+            string[] args = SplitArgs(command);
+            string name = args.Length > 0 ? args[0] : string.Empty;
+            try
+            {
+                switch (name)
+                {
+                    case "help":
+                        OfflineHelp();
+                        return;
+                    case "clear":
+                        ClearScreen();
+                        return;
+                    case "vm":
+                        OfflineVm(args);
+                        return;
+                    case "YlvaOS":
+                        OfflineYlvaOs(args);
+                        return;
+                    case "reboot":
+                        Reboot();
+                        return;
+                    case "shutdown":
+                    case "poweroff":
+                    case "exit":
+                        RequestShutdown();
+                        return;
+                    default:
+                        Append(name + ": real Linux VM is not running");
+                        Append("Use `vm start` to retry booting, or `vm paths` to see required files.");
+                        return;
+                }
+            }
+            catch (YlvaUserException ex)
+            {
+                Append(name + ": " + ex.Message);
+            }
+            catch (Exception ex)
+            {
+                if (Plugin.Log != null)
+                {
+                    Plugin.Log.LogWarning("YlvaOS offline command failed: " + ex);
+                }
+
+                Append(name + ": " + ex.Message);
+            }
+        }
+
+        private void OfflineHelp()
+        {
+            Append("YlvaOS host-side commands available before the real Linux VM starts:");
+            Append("  vm status | vm paths | vm start | vm stop");
+            Append("  YlvaOS set memory <MiB> | YlvaOS set disk <MiB>");
+            Append("  clear | reboot | shutdown | poweroff | exit");
+            Append("After the VM boots, Linux commands run inside the guest OS.");
+        }
+
+        private void OfflineVm(string[] args)
+        {
+            if (vm == null)
+            {
+                Append("VM backend is unavailable.");
+                return;
+            }
+
+            string subcommand = args.Length > 1 ? args[1] : "status";
+            switch (subcommand)
+            {
+                case "status":
+                    AppendVmStatus();
+                    return;
+                case "paths":
+                    Append(vm.DescribePaths());
+                    return;
+                case "start":
+                    StartRealYlvaOs(string.Empty);
+                    return;
+                case "stop":
+                    vm.Stop();
+                    Append("VM stopped.");
+                    return;
+                default:
+                    throw new YlvaUserException("usage: vm status | vm paths | vm start | vm stop");
+            }
+        }
+
+        private void OfflineYlvaOs(string[] args)
+        {
+            if (vm == null)
+            {
+                Append("VM backend is unavailable.");
+                return;
+            }
+
+            if (args.Length == 2 && args[1] == "status")
+            {
+                AppendVmStatus();
+                return;
+            }
+
+            if (args.Length == 4 && args[1] == "set" && (args[2] == "memory" || args[2] == "mem"))
+            {
+                vm.SetMemoryMiB(ParsePositiveInt(args[3], "memory"));
+                Append("YlvaOS memory target set to " + vm.Config.MemoryMiB + " MiB. Reboot YlvaOS to apply.");
+                return;
+            }
+
+            if (args.Length == 4 && args[1] == "set" && args[2] == "disk")
+            {
+                vm.SetDiskMiB(ParsePositiveInt(args[3], "disk"));
+                Append("YlvaOS disk target set to " + vm.Config.DiskMiB + " MiB. Reboot YlvaOS to apply.");
+                return;
+            }
+
+            throw new YlvaUserException("usage: YlvaOS status | YlvaOS set memory <MiB> | YlvaOS set disk <MiB>");
+        }
+
+        private void AppendVmStatus()
+        {
+            if (vm == null)
+            {
+                Append("VM backend is unavailable.");
+                return;
+            }
+
+            YlvaVmStatusSnapshot snapshot = vm.Snapshot();
+            Append("VM status: " + snapshot.Status);
+            Append("Memory: " + snapshot.MemoryMiB + " MiB");
+            Append("Disk target: " + snapshot.DiskMiB + " MiB");
+            Append("Desktop: " + snapshot.DesktopWidth + "x" + snapshot.DesktopHeight + " @ " + snapshot.DesktopRefreshFps + " fps");
+            if (snapshot.VncPort > 0)
+            {
+                Append("VNC: 127.0.0.1:" + snapshot.VncPort);
+            }
+
+            if (!string.IsNullOrEmpty(snapshot.Message))
+            {
+                Append(snapshot.Message);
+            }
+        }
+
+        private static string[] SplitArgs(string command)
+        {
+            List<string> args = new List<string>();
+            StringBuilder current = new StringBuilder();
+            bool quoted = false;
+            for (int i = 0; i < command.Length; i++)
+            {
+                char ch = command[i];
+                if (ch == '"')
+                {
+                    quoted = !quoted;
+                    continue;
+                }
+
+                if (char.IsWhiteSpace(ch) && !quoted)
+                {
+                    if (current.Length > 0)
+                    {
+                        args.Add(current.ToString());
+                        current.Length = 0;
+                    }
+
+                    continue;
+                }
+
+                current.Append(ch);
+            }
+
+            if (current.Length > 0)
+            {
+                args.Add(current.ToString());
+            }
+
+            return args.ToArray();
         }
 
         private static bool TryNormalizeUserName(string raw, out string userName, out string error)
@@ -448,7 +636,7 @@ namespace YlvaOS
 
             Append(message);
             Append("Use `vm paths` to see where QEMU and Linux boot assets must be placed.");
-            Append("Until those files exist, this terminal stays in compatibility-shell mode.");
+            Append("The real Linux VM cannot start until those files exist.");
         }
 
         private void HandleHostCommand(string command)
@@ -494,6 +682,25 @@ namespace YlvaOS
                 if (parts.Length == 3 && parts[0] == "set" && parts[1] == "disk")
                 {
                     vm.SetDiskMiB(ParsePositiveInt(parts[2], "disk"));
+                    return;
+                }
+
+                if (parts.Length == 2 && parts[0] == "network" && parts[1] == "connect")
+                {
+                    string message;
+                    if (!vm.TryConnectNetwork(out message))
+                    {
+                        Append(message);
+                        SendTerminalResponse("\r\n" + message + "\r\n");
+                        if (Plugin.Log != null)
+                        {
+                            Plugin.Log.LogWarning(message);
+                        }
+
+                        return;
+                    }
+
+                    Append(message);
                     return;
                 }
 

@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import base64
 import gzip
+import hashlib
 import json
 import shutil
 import socket
@@ -103,6 +104,94 @@ class ControlServer:
                         print(f"[control] {message}")
                         with self.lock:
                             self.messages.append(message)
+
+
+class HostInputServer:
+    def __init__(self, token: str):
+        self.token = token
+        self.clients: list[socket.socket] = []
+        self.ready_clients: set[socket.socket] = set()
+        self.lock = threading.Lock()
+        self.stop_event = threading.Event()
+        self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.server.bind(("127.0.0.1", 0))
+        self.server.listen(1)
+        self.port = self.server.getsockname()[1]
+        self.thread = threading.Thread(target=self._accept_loop, daemon=True)
+
+    def start(self) -> None:
+        self.thread.start()
+
+    def close(self) -> None:
+        self.stop_event.set()
+        try:
+            self.server.close()
+        except OSError:
+            pass
+        with self.lock:
+            clients = list(self.clients)
+            self.clients.clear()
+            self.ready_clients.clear()
+        for client in clients:
+            try:
+                client.close()
+            except OSError:
+                pass
+
+    def send_paste(self, text: str) -> None:
+        payload = base64.b64encode(text.encode("utf-8")).decode("ascii")
+        self.send_line(f"YLVAOS_HOST {self.token} paste-b64 {payload}")
+
+    def send_line(self, line: str) -> None:
+        data = (line + "\n").encode("ascii")
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            with self.lock:
+                clients = list(self.ready_clients)
+            for client in clients:
+                try:
+                    client.sendall(data)
+                    return
+                except OSError:
+                    with self.lock:
+                        if client in self.clients:
+                            self.clients.remove(client)
+                        self.ready_clients.discard(client)
+            time.sleep(0.2)
+        raise TimeoutError("Timed out waiting for the host input agent")
+
+    def _accept_loop(self) -> None:
+        while not self.stop_event.is_set():
+            try:
+                client, _ = self.server.accept()
+            except OSError:
+                return
+            with self.lock:
+                self.clients.append(client)
+            threading.Thread(target=self._read_until_closed, args=(client,), daemon=True).start()
+
+    def _read_until_closed(self, client: socket.socket) -> None:
+        with client:
+            pending = bytearray()
+            while not self.stop_event.is_set():
+                try:
+                    data = client.recv(256)
+                except OSError:
+                    break
+                if not data:
+                    break
+                pending.extend(data)
+                while b"\n" in pending:
+                    raw, _, rest = pending.partition(b"\n")
+                    pending = bytearray(rest)
+                    line = raw.rstrip(b"\r").decode("ascii", errors="ignore")
+                    if line == f"YLVAOS_HOST {self.token} ready":
+                        with self.lock:
+                            self.ready_clients.add(client)
+        with self.lock:
+            if client in self.clients:
+                self.clients.remove(client)
+            self.ready_clients.discard(client)
 
 
 class AudioServer:
@@ -218,6 +307,14 @@ class VncProbe:
         time.sleep(0.02)
         self.send_key(key_sym, False)
         time.sleep(0.02)
+
+    def hotkey(self, key_syms: list[int]) -> None:
+        for key_sym in key_syms:
+            self.send_key(key_sym, True)
+            time.sleep(0.02)
+        for key_sym in reversed(key_syms):
+            self.send_key(key_sym, False)
+            time.sleep(0.02)
 
     def send_text(self, text: str) -> None:
         for ch in text:
@@ -397,6 +494,20 @@ class QmpInput:
             }
         )
 
+    def connect_user_network(self) -> None:
+        self._execute_allow_duplicate(
+            {
+                "execute": "netdev_add",
+                "arguments": {"type": "user", "id": "ylva_net"},
+            }
+        )
+        self._execute_allow_duplicate(
+            {
+                "execute": "device_add",
+                "arguments": {"driver": "virtio-net-pci", "netdev": "ylva_net", "id": "ylva_nic"},
+            }
+        )
+
     def _send_key(self, qcode: str, down: bool) -> None:
         self._execute(
             {
@@ -411,6 +522,15 @@ class QmpInput:
                 },
             }
         )
+
+    def _execute_allow_duplicate(self, command: dict) -> dict:
+        try:
+            return self._execute(command)
+        except RuntimeError as exc:
+            text = str(exc).lower()
+            if "duplicate" in text or "already exists" in text:
+                return {}
+            raise
 
     def _execute(self, command: dict) -> dict:
         assert self.sock is not None
@@ -527,6 +647,8 @@ def main() -> int:
     token = "desktoptesttoken"
     control = ControlServer(token)
     control.start()
+    host_input = HostInputServer(token)
+    host_input.start()
     audio = AudioServer()
     audio.start()
     display = find_vnc_display()
@@ -588,6 +710,10 @@ def main() -> int:
             f"socket,id=ylva_audio,host=127.0.0.1,port={audio.port},server=off,reconnect-ms=1000",
             "-device",
             "virtserialport,chardev=ylva_audio,name=org.ylvaos.audio",
+            "-chardev",
+            f"socket,id=ylva_hostinput,host=127.0.0.1,port={host_input.port},server=off,reconnect-ms=1000",
+            "-device",
+            "virtserialport,chardev=ylva_hostinput,name=org.ylvaos.hostinput",
             "-kernel",
             str(kernel),
             "-initrd",
@@ -608,14 +734,60 @@ def main() -> int:
     try:
         qmp.connect()
         console.wait_for_any(["YlvaOS:~$"], 180)
+        snapshot = console_snapshot(console)
+        if "__   __ _             ___  ____" not in snapshot or "ver 0.1.0" not in snapshot:
+            raise RuntimeError("YlvaOS login splash was not printed")
         width, height = probe.read_framebuffer_size()
         print(f"[vnc] framebuffer {width}x{height}")
         if width <= 0 or height <= 0:
             raise RuntimeError("VNC framebuffer has an invalid size")
-        run_command(console, "command -v Desktop && command -v Kernel", "YlvaOS:~$", 60)
+        run_command(console, "command -v Desktop && command -v Kernel && command -v ConnectNetwork && command -v ylva-splash && command -v ylva-host-agent", "YlvaOS:~$", 60)
         snapshot = console_snapshot(console)
-        if "/usr/bin/Desktop" not in snapshot or "/usr/bin/Kernel" not in snapshot:
-            raise RuntimeError("Desktop or Kernel command was not found in the guest")
+        for path in ["/usr/bin/Desktop", "/usr/bin/Kernel", "/usr/bin/ConnectNetwork", "/usr/bin/ylva-splash", "/usr/bin/ylva-host-agent"]:
+            if path not in snapshot:
+                raise RuntimeError(f"{path} was not found in the guest")
+        run_command(
+            console,
+            "printf 'no\\n' | ConnectNetwork; printf '\\137\\137YLVA_NETWORK_CANCEL_DONE\\137\\137\\n'",
+            "YlvaOS:~$",
+            40,
+        )
+        snapshot = console_snapshot(console)
+        if "ConnectNetwork cancelled." not in snapshot or "__YLVA_NETWORK_CANCEL_DONE__" not in snapshot:
+            raise RuntimeError("ConnectNetwork cancellation path did not complete")
+
+        network_errors: list[Exception] = []
+
+        def enable_network_after_guest_request() -> None:
+            try:
+                control.wait_for("network connect", 40)
+                qmp.connect_user_network()
+            except Exception as exc:
+                network_errors.append(exc)
+
+        network_thread = threading.Thread(target=enable_network_after_guest_request, daemon=True)
+        network_thread.start()
+        run_command(
+            console,
+            "printf 'yes\\n' | ConnectNetwork; ip route | grep -q '^default ' && printf '\\137\\137YLVA_NETWORK_CONNECTED\\137\\137\\n'",
+            "YlvaOS:~$",
+            90,
+        )
+        network_thread.join(timeout=10)
+        if network_errors:
+            raise network_errors[0]
+        snapshot = console_snapshot(console)
+        if "YlvaOS networking is connected through QEMU user-mode NAT." not in snapshot or "__YLVA_NETWORK_CONNECTED__" not in snapshot:
+            raise RuntimeError("ConnectNetwork did not establish a default route")
+        run_command(
+            console,
+            "doas apk update >/tmp/ylva-apk-update.log 2>&1 && printf '\\137\\137YLVA_APK_UPDATE_OK\\137\\137\\n' || (tail -n 40 /tmp/ylva-apk-update.log; printf '\\137\\137YLVA_APK_UPDATE_FAILED\\137\\137\\n')",
+            "YlvaOS:~$",
+            180,
+        )
+        snapshot = console_snapshot(console)
+        if "__YLVA_APK_UPDATE_OK__" not in snapshot or "__YLVA_APK_UPDATE_FAILED__" in snapshot:
+            raise RuntimeError("apk update failed after ConnectNetwork")
         run_command(
             console,
             "command -v wine && command -v pactl && command -v speaker-test && command -v ylva-audio-test && command -v Elona",
@@ -668,6 +840,37 @@ def main() -> int:
         snapshot = console_snapshot(console)
         if "__YLVA_X_READY__" not in snapshot:
             raise RuntimeError("Xorg did not create /tmp/.X11-unix/X0")
+        run_command(console, "DISPLAY=:0 xdotool search --name 'YlvaOS Terminal' | head -n 1 >/tmp/ylva-terminal-window; test -s /tmp/ylva-terminal-window && echo __YLVA_TERMINAL_VISIBLE__", "YlvaOS:~$", 30)
+        snapshot = console_snapshot(console)
+        if "__YLVA_TERMINAL_VISIBLE__" not in snapshot:
+            raise RuntimeError("Initial desktop terminal was not visible")
+        run_command(
+            console,
+            "DISPLAY=:0 sh -c 'win=$(xdotool search --name \"YlvaOS Terminal\" | tail -n 1); xdotool windowactivate \"$win\" windowfocus \"$win\"'",
+            "YlvaOS:~$",
+            30,
+        )
+        paste_body = "~/Import /dev/vdb1 [test] {ok} | ; : \" ' \\\\ $ ` !\n"
+        paste_command = "cat >/tmp/ylva-host-paste.txt <<'EOF'\n" + paste_body + "EOF\n"
+        expected_paste_hash = hashlib.sha256(paste_body.encode("utf-8")).hexdigest()
+        host_input.send_paste(paste_command)
+        time.sleep(4)
+        run_command(
+            console,
+            f"sha256sum /tmp/ylva-host-paste.txt | grep -q '^{expected_paste_hash} ' && printf '\\137\\137YLVA_HOST_PASTE_OK\\137\\137\\n' || (od -An -tx1 /tmp/ylva-host-paste.txt 2>/dev/null; printf '\\137\\137YLVA_HOST_PASTE_BAD\\137\\137\\n')",
+            "YlvaOS:~$",
+            30,
+        )
+        snapshot = console_snapshot(console)
+        if "__YLVA_HOST_PASTE_OK__" not in snapshot or "__YLVA_HOST_PASTE_BAD__" in snapshot:
+            raise RuntimeError("Host clipboard paste was not injected exactly into the desktop terminal")
+        run_command(console, "DISPLAY=:0 xdotool search --name 'YlvaOS Terminal' windowkill >/dev/null 2>&1 || true; sleep 1; echo __YLVA_TERMINAL_CLOSED__", "YlvaOS:~$", 30)
+        probe.hotkey([0xFFE3, 0xFFE9, ord("t")])
+        time.sleep(2)
+        run_command(console, "DISPLAY=:0 xdotool search --name 'YlvaOS Terminal' | head -n 1 >/tmp/ylva-terminal-window; test -s /tmp/ylva-terminal-window && echo __YLVA_TERMINAL_REOPENED__", "YlvaOS:~$", 30)
+        snapshot = console_snapshot(console)
+        if "__YLVA_TERMINAL_REOPENED__" not in snapshot:
+            raise RuntimeError("Ctrl+Alt+T did not reopen the desktop terminal")
         if args.elona_dir is not None:
             run_command(
                 console,
@@ -706,6 +909,7 @@ def main() -> int:
         probe.close()
         qmp.close()
         control.close()
+        host_input.close()
         audio.close()
         if process.poll() is None:
             process.terminate()

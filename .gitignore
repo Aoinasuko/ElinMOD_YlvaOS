@@ -1,5 +1,31 @@
-YlvaOS/bin/
-YlvaOS/obj/
-Mod_YlvaOS/*.dll
-Mod_YlvaOS/*.pdb
-_work/
+# Build outputs
+/YlvaOS/bin/
+/YlvaOS/obj/
+/Mod_YlvaOS/*.dll
+/Mod_YlvaOS/*.pdb
+/Mod_YlvaOS/*.mdb
+
+# Generated VM/image build workspace
+/_work/
+
+# Public GitHub repository policy:
+# keep third-party/runtime binaries out of git and provide them via release
+# packages or by rebuilding with Tools/build_ylvaos_image.py.
+/Mod_YlvaOS/Tools/qemu/
+/Mod_YlvaOS/vm/disk.qcow2
+/Mod_YlvaOS/vm/disk.qcow2.gz
+/Mod_YlvaOS/vm/assets/vmlinuz
+/Mod_YlvaOS/vm/assets/initrd.img
+
+# Local Elona test copy; users must provide their own Elona files.
+/Docs/elona/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# IDE/user-local files
+/.vs/
+*.user
+*.suo
+*.tmp
