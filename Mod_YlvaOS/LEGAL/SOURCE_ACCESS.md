@@ -15,8 +15,8 @@ The script downloads the Alpine virt ISO listed in
 `YLVAOS_IMAGE_MANIFEST.json`, verifies its SHA-256, extracts the boot assets,
 builds a 16 GiB preinstalled root disk, installs the package set recorded in
 `alpine-installed-packages.txt` including the lightweight X desktop packages,
-Wine, PulseAudio/ALSA audio support, FluidSynth, a GM soundfont, and Noto CJK
-fonts, and writes:
+Wine, PulseAudio/ALSA audio support, FluidSynth, a GM soundfont, Noto CJK
+fonts, and Japanese locale data, and writes:
 
 - `Mod_YlvaOS/vm/assets/vmlinuz`
 - `Mod_YlvaOS/vm/assets/initrd.img`
@@ -106,11 +106,13 @@ the Alpine aports repository:
 
 - https://gitlab.alpinelinux.org/alpine/aports
 
-## Font and soundfont source
+## Font, locale, and soundfont source
 
 The image includes Noto CJK fonts for Japanese text rendering and the Alpine
-GM soundfont package used by FluidSynth. Use `alpine-installed-packages.txt` for
+musl locale packages used by Wine Japanese locale setup, plus the Alpine GM
+soundfont package used by FluidSynth. Use `alpine-installed-packages.txt` for
 the exact installed package names and versions.
 
 - Noto CJK upstream: https://github.com/notofonts/noto-cjk
+- musl-locales upstream: https://git.adelielinux.org/adelie/musl-locales/
 - Alpine package metadata: https://gitlab.alpinelinux.org/alpine/aports

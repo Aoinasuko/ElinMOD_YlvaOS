@@ -7,27 +7,7 @@ public sealed class TraitYlvaOS_Computer : TraitComputer
         return IsPlayer(c);
     }
 
-    public override bool CanUse(Chara c, Card tg)
-    {
-        return IsPlayer(c);
-    }
-
-    public override bool CanUse(Chara c, Point p)
-    {
-        return IsPlayer(c);
-    }
-
     public override bool OnUse(Chara c)
-    {
-        return Open(c);
-    }
-
-    public override bool OnUse(Chara c, Card tg)
-    {
-        return Open(c);
-    }
-
-    public override bool OnUse(Chara c, Point p)
     {
         return Open(c);
     }

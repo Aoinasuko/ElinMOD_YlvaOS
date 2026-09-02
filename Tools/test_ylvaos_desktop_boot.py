@@ -790,17 +790,34 @@ def main() -> int:
             raise RuntimeError("apk update failed after ConnectNetwork")
         run_command(
             console,
-            "command -v wine && command -v pactl && command -v speaker-test && command -v ylva-audio-test && command -v Elona",
+            "for cmd in wine pactl speaker-test YlvaOS; do command -v \"$cmd\"; done; "
+            "for path in /usr/lib/ylvaos/setup-audio /usr/lib/ylvaos/setup-font /usr/lib/ylvaos/setup-wine; do test -x \"$path\" && echo \"$path\"; done; "
+            "! command -v ylva-audio-test >/dev/null 2>&1 && "
+            "! command -v ylva-configure-wine >/dev/null 2>&1 && "
+            "! command -v ylva-wine-init >/dev/null 2>&1 && "
+            "! command -v Elona >/dev/null 2>&1 && "
+            "! command -v elona >/dev/null 2>&1 && "
+            "echo __YLVA_COMMAND_LAYOUT_OK__",
             "YlvaOS:~$",
             60,
         )
         snapshot = console_snapshot(console)
-        for path in ["/usr/bin/wine", "/usr/bin/pactl", "/usr/bin/speaker-test", "/usr/bin/ylva-audio-test", "/usr/bin/Elona"]:
+        for path in [
+            "/usr/bin/wine",
+            "/usr/bin/pactl",
+            "/usr/bin/speaker-test",
+            "/usr/bin/YlvaOS",
+            "/usr/lib/ylvaos/setup-audio",
+            "/usr/lib/ylvaos/setup-font",
+            "/usr/lib/ylvaos/setup-wine",
+        ]:
             if path not in snapshot:
                 raise RuntimeError(f"{path} was not found in the guest")
+        if "__YLVA_COMMAND_LAYOUT_OK__" not in snapshot:
+            raise RuntimeError("YlvaOS command layout still exposes an old helper command")
         run_command(
             console,
-            "wine --version; ylva-start-audio >/tmp/ylva-audio.log 2>&1; pactl list short sinks | awk '{print $2}' | grep -qx ylva && echo __YLVA_PULSE_SINK__",
+            "wine --version; YlvaOS setup audio; pactl list short sinks | awk '{print $2}' | grep -qx ylva && echo __YLVA_PULSE_SINK__",
             "YlvaOS:~$",
             90,
         )
@@ -809,7 +826,16 @@ def main() -> int:
             raise RuntimeError("Wine or the YlvaOS PulseAudio sink did not start")
         run_command(
             console,
-            "timeout 15 ylva-audio-test >/tmp/ylva-audio-test.log 2>&1; echo __YLVA_AUDIO_TEST_DONE__",
+            "YlvaOS setup wine >/tmp/ylva-wine-setup.log 2>&1; wine reg query 'HKLM\\System\\CurrentControlSet\\Control\\Nls\\CodePage' /v ACP; fc-match 'MS Gothic'; echo __YLVA_WINE_CONFIGURED__",
+            "YlvaOS:~$",
+            240,
+        )
+        snapshot = console_snapshot(console)
+        if "__YLVA_WINE_CONFIGURED__" not in snapshot or "932" not in snapshot or "Noto Sans CJK JP" not in snapshot:
+            raise RuntimeError("Wine Japanese locale/font configuration did not complete")
+        run_command(
+            console,
+            "timeout 15 sh -c '. /usr/lib/ylvaos/wine-env; speaker-test -D default -c 2 -r 44100 -F S16_LE -t sine -f 440 -l 1' >/tmp/ylva-audio-test.log 2>&1; echo __YLVA_AUDIO_TEST_DONE__",
             "YlvaOS:~$",
             30,
         )
@@ -874,9 +900,9 @@ def main() -> int:
         if args.elona_dir is not None:
             run_command(
                 console,
-                "DISPLAY=:0 sh -c 'cd ~/ElonaTest && Elona ~/ElonaTest >/tmp/ylva-elona.log 2>&1 &' ; sleep 12; pgrep -fa 'elona.exe|[w]ine' >/tmp/ylva-elona-processes.txt; if [ -s /tmp/ylva-elona-processes.txt ]; then cat /tmp/ylva-elona-processes.txt; echo __YLVA_ELONA_STARTED__; else tail -n 80 /tmp/ylva-elona.log; echo __YLVA_ELONA_NOT_RUNNING__; fi; wineserver -k >/dev/null 2>&1 || true",
+                "DISPLAY=:0 sh -c '. /usr/lib/ylvaos/wine-env; YlvaOS setup wine >/tmp/ylva-wine-setup.log 2>&1 || true; cd ~/ElonaTest && wine elona.exe >/tmp/ylva-elona.log 2>&1 &' ; sleep 20; pgrep -fa '[e]lona.exe' >/tmp/ylva-elona-processes.txt; if [ -s /tmp/ylva-elona-processes.txt ]; then cat /tmp/ylva-elona-processes.txt; echo __YLVA_ELONA_STARTED__; else tail -n 80 /tmp/ylva-elona.log; echo __YLVA_ELONA_NOT_RUNNING__; fi; wineserver -k >/dev/null 2>&1 || true",
                 "YlvaOS:~$",
-                60,
+                90,
             )
             snapshot = console_snapshot(console)
             if "__YLVA_ELONA_STARTED__" not in snapshot:

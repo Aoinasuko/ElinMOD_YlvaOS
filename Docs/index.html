@@ -228,7 +228,7 @@
     <div class="wrap top">
       <div>
         <h1>YlvaOS</h1>
-        <p class="lead">Elin内のコンピューター家具から起動する、実Linux VMベースの小さなOSです。テキストコンソール、軽量デスクトップ、Wine、Elona起動補助、任意ネットワーク接続を備えています。</p>
+        <p class="lead">Elin内のコンピューター家具から起動する、実Linux VMベースの小さなOSです。テキストコンソール、軽量デスクトップ、Wine、任意ネットワーク接続を備えています。</p>
       </div>
       <pre aria-label="YlvaOS splash">+----------------------------------+
 |  Elin computer  ->  YlvaOS      |
@@ -284,14 +284,14 @@
         <div>仮想ディスクの目標サイズを拡張します。縮小はできません。反映は次回VM起動時です。</div>
         <div>ConnectNetwork</div>
         <div>英語のリスク警告を表示し、<code>yes</code> と入力した場合だけ、そのVMセッションでインターネット接続を有効化します。</div>
-        <div>ylva-wine-init</div>
-        <div>Wine prefixと音声経路を初期化します。Elonaを初めて動かす前に実行します。</div>
-        <div>Elona [path]</div>
-        <div>Wine経由でElonaを起動します。引数なしでは <code>~/Elona/elona.exe</code> を探します。</div>
-        <div>ylva-audio-test</div>
-        <div>短いテスト音を鳴らし、YlvaOSからElin経由で音が出るか確認します。</div>
+        <div>YlvaOS setup wine</div>
+        <div>Wine prefix、音声経路、日本語表示用のCP932/フォント設定を初期化します。Elonaを初めて動かす前に実行します。</div>
+        <div>YlvaOS setup font</div>
+        <div>fontconfig cacheとWineの日本語フォント置換を再適用します。</div>
+        <div>YlvaOS setup audio</div>
+        <div>PulseAudioの <code>ylva</code> sink とMIDI再生用FluidSynthを起動します。</div>
       </div>
-      <p>小文字エイリアスとして <code>desktop</code>、<code>kernel</code>、<code>terminal</code>、<code>elona</code>、<code>connectnetwork</code> も用意されています。</p>
+      <p>小文字エイリアスとして <code>desktop</code>、<code>kernel</code>、<code>terminal</code>、<code>connectnetwork</code> も用意されています。</p>
     </section>
 
     <section id="desktop">
@@ -316,10 +316,11 @@ dev=/dev/vdb1
 doas mount -t vfat -o ro,uid=$(id -u),gid=$(id -g) "$dev" ~/Import
 cp -r ~/Import/elona ~/Elona
 doas umount ~/Import</pre>
-      <p>デスクトップへ入り、Wineを初期化して起動します。</p>
+      <p>デスクトップへ入り、Wineを初期化してからElonaのフォルダで起動します。</p>
       <pre>Desktop
-ylva-wine-init
-Elona</pre>
+YlvaOS setup wine
+cd ~/Elona
+wine elona.exe</pre>
     </section>
 
     <section id="network">
@@ -343,6 +344,7 @@ doas apk add &lt;package&gt;</pre>
 ├─ Tools\qemu\
 └─ Import\</pre>
       <p>YlvaOSからホスト全体へアクセスする経路は用意していません。Importフォルダだけを読み取り専用で渡します。</p>
+      <p class="note">rootfs更新後も既存の <code>vm\disk.qcow2</code> は自動上書きされません。日本語表示や音声設定の変更を取り込むには、必要なデータをバックアップしてから既存ディスクを削除し、同梱root diskを再展開してください。</p>
     </section>
 
     <section id="distribution">

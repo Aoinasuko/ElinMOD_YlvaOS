@@ -15,7 +15,7 @@ The script downloads the official Alpine Linux virt ISO, verifies its SHA-256,
 extracts `boot/vmlinuz-virt` and `boot/initramfs-virt`, boots the ISO under the
 bundled QEMU, installs Alpine packages into a 16 GiB ext4 qcow2 root disk,
 including the lightweight X desktop, Wine, PulseAudio/ALSA audio support,
-FluidSynth, a GM soundfont, and CJK fonts, and compresses the result to
+FluidSynth, a GM soundfont, CJK fonts, and Japanese locale data, and compresses the result to
 `Mod_YlvaOS/vm/disk.qcow2.gz`.
 
 ## QEMU Source
@@ -113,10 +113,11 @@ the package list recorded in `LEGAL/alpine-installed-packages.txt`.
 
 ## Font and Soundfont Source
 
-The image includes CJK fonts and a GM soundfont package. Use
+The image includes CJK fonts, Japanese locale data, and a GM soundfont package. Use
 `LEGAL/alpine-installed-packages.txt` for exact package names and versions.
 
 - Noto CJK upstream: https://github.com/notofonts/noto-cjk
+- musl-locales upstream: https://git.adelielinux.org/adelie/musl-locales/
 - Alpine packaging source: https://gitlab.alpinelinux.org/alpine/aports
 
 ## Distributor Reminder

@@ -209,6 +209,8 @@ mount-2.42.1-r0 - mount tool from util-linux
 mpg123-libs-1.33.5-r0 - Console-based MPEG Audio Player for Layers 1, 2 and 3 (libraries)
 mtdev-1.1.7-r0 - Multitouch Protocol Translation Library Development Package
 musl-1.2.6-r2 - the musl c library (libc) implementation
+musl-locales-0.1.0-r1 - Locales support for musl
+musl-locales-lang-0.1.0-r1 - Languages for package musl-locales
 musl-utils-1.2.6-r2 - the musl c library (libc) implementation
 ncurses-terminfo-base-6.6_p20260516-r0 - Descriptions of common terminals
 nettle-3.10.2-r0 - Low-level cryptographic library

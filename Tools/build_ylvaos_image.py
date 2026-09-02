@@ -11,7 +11,6 @@ install packages into the offline root disk.
 from __future__ import annotations
 
 import argparse
-import base64
 import gzip
 import hashlib
 import os
@@ -224,6 +223,8 @@ def install_script() -> str:
             "less",
             "shadow",
             "ca-certificates",
+            "musl-locales",
+            "musl-locales-lang",
             "dbus",
             "dbus-x11",
             "eudev",
@@ -306,6 +307,14 @@ Welcome to YlvaOS.
 
 This is a real Alpine Linux based userspace running inside the Elin MOD QEMU sandbox.
 Runtime networking is disabled by default from the MOD side.
+EOF
+
+mkdir -p /mnt/etc/profile.d
+cat >/mnt/etc/profile.d/ylvaos-locale.sh <<'EOF'
+export MUSL_LOCPATH=/usr/share/i18n/locales/musl
+export LANG=ja_JP.UTF-8
+export LC_CTYPE=ja_JP.UTF-8
+export LC_MESSAGES=C.UTF-8
 EOF
 
 cat >/mnt/etc/fstab <<'EOF'
@@ -418,13 +427,16 @@ fi
 
 cat >"/home/$user/.profile" <<EOF_PROFILE
 export PATH=/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
-export LANG=C.UTF-8
-export LC_CTYPE=C.UTF-8
+export MUSL_LOCPATH=/usr/share/i18n/locales/musl
+export LANG=ja_JP.UTF-8
+export LC_CTYPE=ja_JP.UTF-8
+export LC_MESSAGES=C.UTF-8
 export TERM=vt100
 stty rows $rows cols $cols -ixon 2>/dev/null || true
 export XDG_RUNTIME_DIR="/tmp/ylva-runtime-$user"
-mkdir -p "/tmp/ylva-runtime-$user" 2>/dev/null || true
+mkdir -p "/tmp/ylva-runtime-$user" "/tmp/ylva-runtime-$user/pulse" 2>/dev/null || true
 chmod 700 "/tmp/ylva-runtime-$user" 2>/dev/null || true
+export PULSE_SERVER="unix:/tmp/ylva-runtime-$user/pulse/native"
 ylva-start-audio >/tmp/ylva-audio.log 2>&1 || true
 if command -v ylva-host-agent >/dev/null 2>&1 && ! pgrep -u "\$(id -u)" -f '[y]lva-host-agent' >/dev/null 2>&1; then
     ylva-host-agent >/tmp/ylva-host-agent.log 2>&1 &
@@ -446,13 +458,22 @@ chmod 0755 /mnt/sbin/ylva-getty
 
 cat >/mnt/etc/profile.d/ylvaos-terminal.sh <<'EOF'
 export PATH=/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
-export LANG=C.UTF-8
-export LC_CTYPE=C.UTF-8
+export MUSL_LOCPATH=/usr/share/i18n/locales/musl
+export LANG=ja_JP.UTF-8
+export LC_CTYPE=ja_JP.UTF-8
+export LC_MESSAGES=C.UTF-8
 export TERM=vt100
 stty rows 32 cols 140 -ixon 2>/dev/null || true
 EOF
 
 cat >/mnt/etc/profile.d/ylvaos-audio.sh <<'EOF'
+if [ -z "${XDG_RUNTIME_DIR:-}" ]; then
+    ylva_audio_user="$(id -un 2>/dev/null || printf ylva)"
+    export XDG_RUNTIME_DIR="/tmp/ylva-runtime-$ylva_audio_user"
+fi
+mkdir -p "$XDG_RUNTIME_DIR" "$XDG_RUNTIME_DIR/pulse" 2>/dev/null || true
+chmod 700 "$XDG_RUNTIME_DIR" 2>/dev/null || true
+export PULSE_SERVER="${PULSE_SERVER:-unix:$XDG_RUNTIME_DIR/pulse/native}"
 export ALSA_CONFIG_PATH=/etc/asound.conf
 export PULSE_PROP="media.role=game"
 EOF
@@ -527,8 +548,10 @@ cat >/mnt/usr/bin/ylva-host-agent <<'EOF'
 #!/bin/sh
 set -u
 export PATH=/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
-export LANG="${LANG:-C.UTF-8}"
-export LC_CTYPE="${LC_CTYPE:-C.UTF-8}"
+export MUSL_LOCPATH="${MUSL_LOCPATH:-/usr/share/i18n/locales/musl}"
+export LANG="${LANG:-ja_JP.UTF-8}"
+export LC_CTYPE="${LC_CTYPE:-ja_JP.UTF-8}"
+export LC_MESSAGES="${LC_MESSAGES:-C.UTF-8}"
 
 get_arg() {
     name="$1"
@@ -551,8 +574,8 @@ paste_base64() {
     if [ -S /tmp/.X11-unix/X0 ] && command -v xdotool >/dev/null 2>&1; then
         display="${DISPLAY:-:0}"
         xauthority="${XAUTHORITY:-$HOME/.Xauthority}"
-        DISPLAY="$display" XAUTHORITY="$xauthority" xdotool type --clearmodifiers --delay 0 --file "$tmp" >/dev/null 2>&1 ||
-            DISPLAY=:0 xdotool type --clearmodifiers --delay 0 --file "$tmp" >/dev/null 2>&1 ||
+        DISPLAY="$display" XAUTHORITY="$xauthority" xdotool type --clearmodifiers --delay 1 --file "$tmp" >/dev/null 2>&1 ||
+            DISPLAY=:0 xdotool type --clearmodifiers --delay 1 --file "$tmp" >/dev/null 2>&1 ||
             true
     fi
 
@@ -690,6 +713,35 @@ ctl.!default {
 }
 EOF
 
+mkdir -p /mnt/etc/fonts
+cat >/mnt/etc/fonts/local.conf <<'EOF'
+<?xml version="1.0"?>
+<!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">
+<fontconfig>
+  <alias>
+    <family>MS Gothic</family>
+    <prefer><family>Noto Sans CJK JP</family></prefer>
+  </alias>
+  <alias>
+    <family>MS PGothic</family>
+    <prefer><family>Noto Sans CJK JP</family></prefer>
+  </alias>
+  <alias>
+    <family>MS UI Gothic</family>
+    <prefer><family>Noto Sans CJK JP</family></prefer>
+  </alias>
+  <alias>
+    <family>MS Mincho</family>
+    <prefer><family>Noto Serif CJK JP</family><family>Noto Sans CJK JP</family></prefer>
+  </alias>
+  <alias>
+    <family>Meiryo</family>
+    <prefer><family>Noto Sans CJK JP</family></prefer>
+  </alias>
+</fontconfig>
+EOF
+chroot /mnt /usr/bin/fc-cache -f >/dev/null 2>&1 || true
+
 cat >/mnt/usr/bin/ylva-audio-bridge <<'EOF'
 #!/bin/sh
 set -u
@@ -729,17 +781,22 @@ user="$(id -un 2>/dev/null || printf ylva)"
 runtime="${XDG_RUNTIME_DIR:-/tmp/ylva-runtime-$user}"
 pipe=/tmp/ylva-audio.pcm
 export XDG_RUNTIME_DIR="$runtime"
+export PULSE_SERVER="unix:$runtime/pulse/native"
+export ALSA_CONFIG_PATH=/etc/asound.conf
 
-mkdir -p "$runtime"
+mkdir -p "$runtime" "$runtime/pulse"
 chmod 700 "$runtime" 2>/dev/null || true
 if [ ! -p "$pipe" ]; then
     rm -f "$pipe"
     mkfifo "$pipe"
 fi
 chmod 0666 "$pipe" >/dev/null 2>&1 || true
+if command -v ylva-audio-bridge >/dev/null 2>&1 && ! pgrep -f '/usr/bin/ylva-audio-bridge' >/dev/null 2>&1; then
+    ylva-audio-bridge >/tmp/ylva-audio-bridge.log 2>&1 &
+fi
 
-if ! pgrep -u "$(id -u)" pulseaudio >/dev/null 2>&1; then
-    pulseaudio --start --exit-idle-time=-1 --log-target=file:/tmp/ylva-pulseaudio.log >/dev/null 2>&1 || true
+if ! pulseaudio --check >/dev/null 2>&1; then
+    pulseaudio --daemonize=yes --exit-idle-time=-1 --log-target=file:/tmp/ylva-pulseaudio.log >/dev/null 2>&1 || true
 fi
 
 for _ in 1 2 3 4 5 6 7 8 9 10; do
@@ -749,9 +806,13 @@ for _ in 1 2 3 4 5 6 7 8 9 10; do
     sleep 1
 done
 
-if ! pactl list short sinks 2>/dev/null | awk '{print $2}' | grep -qx ylva; then
-    pactl load-module module-pipe-sink sink_name=ylva file="$pipe" format=s16le rate=44100 channels=2 >/tmp/ylva-pipe-sink.id 2>/dev/null || true
-fi
+for _ in 1 2 3; do
+    if pactl list short sinks 2>/dev/null | awk '{print $2}' | grep -qx ylva; then
+        break
+    fi
+    pactl load-module module-pipe-sink sink_name=ylva file="$pipe" format=s16le rate=44100 channels=2 sink_properties=device.description=YlvaOS >/tmp/ylva-pipe-sink.id 2>/tmp/ylva-pipe-sink.log || true
+    sleep 1
+done
 
 pactl set-default-sink ylva >/dev/null 2>&1 || true
 
@@ -778,44 +839,89 @@ fi
 EOF
 chmod 0755 /mnt/etc/local.d/ylva-audio.start
 
-cat >/mnt/usr/bin/ylva-audio-test <<'EOF'
-#!/bin/sh
-set -u
-ylva-start-audio >/tmp/ylva-audio.log 2>&1 || true
-exec speaker-test -D default -c 2 -r 44100 -F S16_LE -t sine -f 440 -l 1
-EOF
-chmod 0755 /mnt/usr/bin/ylva-audio-test
-
-cat >/mnt/usr/bin/ylva-wine-init <<'EOF'
-#!/bin/sh
-set -u
+mkdir -p /mnt/usr/lib/ylvaos
+cat >/mnt/usr/lib/ylvaos/wine-env <<'EOF'
+export MUSL_LOCPATH=/usr/share/i18n/locales/musl
+export LANG=ja_JP.UTF-8
+export LC_CTYPE=ja_JP.UTF-8
+export LC_MESSAGES=C.UTF-8
 export WINEPREFIX="${WINEPREFIX:-$HOME/.wine}"
-ylva-start-audio >/tmp/ylva-audio.log 2>&1 || true
-wineboot -u
-wine reg add 'HKCU\Software\Wine\Drivers' /v Audio /d pulse /f >/dev/null 2>&1 || true
-echo "Wine prefix is ready at $WINEPREFIX."
+export WINEDLLOVERRIDES="${WINEDLLOVERRIDES:-mscoree,mshtml=}"
+export PULSE_LATENCY_MSEC="${PULSE_LATENCY_MSEC:-60}"
+if [ -z "${XDG_RUNTIME_DIR:-}" ]; then
+    ylva_audio_user="$(id -un 2>/dev/null || printf ylva)"
+    export XDG_RUNTIME_DIR="/tmp/ylva-runtime-$ylva_audio_user"
+fi
+mkdir -p "$XDG_RUNTIME_DIR" "$XDG_RUNTIME_DIR/pulse" 2>/dev/null || true
+chmod 700 "$XDG_RUNTIME_DIR" 2>/dev/null || true
+export PULSE_SERVER="${PULSE_SERVER:-unix:$XDG_RUNTIME_DIR/pulse/native}"
+export ALSA_CONFIG_PATH="${ALSA_CONFIG_PATH:-/etc/asound.conf}"
 EOF
-chmod 0755 /mnt/usr/bin/ylva-wine-init
 
-cat >/mnt/usr/bin/Elona <<'EOF'
+cat >/mnt/usr/lib/ylvaos/setup-audio <<'EOF'
 #!/bin/sh
 set -u
-export WINEPREFIX="${WINEPREFIX:-$HOME/.wine}"
-game_dir="${1:-$HOME/Elona}"
-exe="$game_dir/elona.exe"
+. /usr/lib/ylvaos/wine-env
 
-if [ ! -f "$exe" ]; then
-    echo "Elona was not found at $exe."
-    echo "Copy it to ~/Elona, or run: Elona /path/to/elona"
-    exit 2
+ylva-start-audio >/tmp/ylva-audio.log 2>&1 || true
+if pactl list short sinks 2>/dev/null | awk '{print $2}' | grep -qx ylva; then
+    echo "YlvaOS audio sink is ready."
+    exit 0
 fi
 
-ylva-start-audio >/tmp/ylva-audio.log 2>&1 || true
-cd "$game_dir"
-exec wine elona.exe
+echo "YlvaOS audio sink did not become ready. See /tmp/ylva-audio.log and /tmp/ylva-pipe-sink.log."
+exit 1
 EOF
-chmod 0755 /mnt/usr/bin/Elona
-ln -sf /usr/bin/Elona /mnt/usr/bin/elona
+chmod 0755 /mnt/usr/lib/ylvaos/setup-audio
+
+cat >/mnt/usr/lib/ylvaos/setup-font <<'EOF'
+#!/bin/sh
+set -u
+. /usr/lib/ylvaos/wine-env
+
+fc-cache -f >/tmp/ylva-font-cache.log 2>&1 || true
+wine reg add 'HKLM\\Software\\Microsoft\\Windows NT\\CurrentVersion\\FontSubstitutes' /v 'MS Gothic' /d 'Noto Sans CJK JP' /f >/dev/null 2>&1 || true
+wine reg add 'HKLM\\Software\\Microsoft\\Windows NT\\CurrentVersion\\FontSubstitutes' /v 'MS PGothic' /d 'Noto Sans CJK JP' /f >/dev/null 2>&1 || true
+wine reg add 'HKLM\\Software\\Microsoft\\Windows NT\\CurrentVersion\\FontSubstitutes' /v 'MS UI Gothic' /d 'Noto Sans CJK JP' /f >/dev/null 2>&1 || true
+wine reg add 'HKLM\\Software\\Microsoft\\Windows NT\\CurrentVersion\\FontSubstitutes' /v 'MS Mincho' /d 'Noto Serif CJK JP' /f >/dev/null 2>&1 || true
+wine reg add 'HKCU\\Software\\Wine\\Fonts\\Replacements' /v 'MS Gothic' /d 'Noto Sans CJK JP' /f >/dev/null 2>&1 || true
+wine reg add 'HKCU\\Software\\Wine\\Fonts\\Replacements' /v 'MS PGothic' /d 'Noto Sans CJK JP' /f >/dev/null 2>&1 || true
+wine reg add 'HKCU\\Software\\Wine\\Fonts\\Replacements' /v 'MS UI Gothic' /d 'Noto Sans CJK JP' /f >/dev/null 2>&1 || true
+wine reg add 'HKCU\\Software\\Wine\\Fonts\\Replacements' /v 'MS Mincho' /d 'Noto Serif CJK JP' /f >/dev/null 2>&1 || true
+echo "YlvaOS fonts are ready."
+EOF
+chmod 0755 /mnt/usr/lib/ylvaos/setup-font
+
+cat >/mnt/usr/lib/ylvaos/setup-wine <<'EOF'
+#!/bin/sh
+set -u
+. /usr/lib/ylvaos/wine-env
+
+marker="$WINEPREFIX/.ylvaos-jp-wine-v3"
+if [ -f "$marker" ]; then
+    echo "Wine prefix is ready at $WINEPREFIX."
+    exit 0
+fi
+
+mkdir -p "$WINEPREFIX"
+/usr/lib/ylvaos/setup-audio >/tmp/ylva-audio.log 2>&1 || true
+wineboot -u >/tmp/ylva-wineboot.log 2>&1 || true
+
+wine reg add 'HKCU\\Software\\Wine\\Drivers' /v Audio /d alsa /f >/dev/null 2>&1 || true
+wine reg add 'HKCU\\Control Panel\\International' /v LocaleName /d ja-JP /f >/dev/null 2>&1 || true
+wine reg add 'HKCU\\Control Panel\\International' /v sCountry /d Japan /f >/dev/null 2>&1 || true
+wine reg add 'HKCU\\Control Panel\\International' /v sLanguage /d JPN /f >/dev/null 2>&1 || true
+wine reg add 'HKLM\\System\\CurrentControlSet\\Control\\Nls\\CodePage' /v ACP /d 932 /f >/dev/null 2>&1 || true
+wine reg add 'HKLM\\System\\CurrentControlSet\\Control\\Nls\\CodePage' /v OEMCP /d 932 /f >/dev/null 2>&1 || true
+wine reg add 'HKLM\\System\\CurrentControlSet\\Control\\Nls\\CodePage' /v MACCP /d 10001 /f >/dev/null 2>&1 || true
+wine reg add 'HKLM\\System\\CurrentControlSet\\Control\\Nls\\Language' /v Default /d 0411 /f >/dev/null 2>&1 || true
+wine reg add 'HKLM\\System\\CurrentControlSet\\Control\\Nls\\Language' /v InstallLanguage /d 0411 /f >/dev/null 2>&1 || true
+/usr/lib/ylvaos/setup-font >/tmp/ylva-font-setup.log 2>&1 || true
+
+touch "$marker"
+echo "Wine prefix is ready at $WINEPREFIX."
+EOF
+chmod 0755 /mnt/usr/lib/ylvaos/setup-wine
 
 cat >/mnt/usr/bin/Terminal <<'EOF'
 #!/bin/sh
@@ -859,8 +965,9 @@ user="${USER:-ylva}"
 home="${HOME:-/home/$user}"
 export HOME="$home"
 export XDG_RUNTIME_DIR="/tmp/ylva-runtime-$user"
-mkdir -p "$XDG_RUNTIME_DIR" "$home/.config/openbox" "$home/.config/tint2"
+mkdir -p "$XDG_RUNTIME_DIR" "$XDG_RUNTIME_DIR/pulse" "$home/.config/openbox" "$home/.config/tint2"
 chmod 700 "$XDG_RUNTIME_DIR" 2>/dev/null || true
+export PULSE_SERVER="unix:$XDG_RUNTIME_DIR/pulse/native"
 ylva-start-audio >/tmp/ylva-audio.log 2>&1 || true
 
 cat >"$home/.Xresources" <<'EOF_XRES'
@@ -1065,7 +1172,7 @@ emit_host() {
 }
 
 usage() {
-    echo "usage: YlvaOS set memory <MiB> | YlvaOS set disk <MiB> | YlvaOS status"
+    echo "usage: YlvaOS set memory <MiB> | YlvaOS set disk <MiB> | YlvaOS setup wine|font|audio | YlvaOS status"
 }
 
 is_positive_int() {
@@ -1076,7 +1183,7 @@ is_positive_int() {
     [ "$1" -gt 0 ] 2>/dev/null
 }
 
-case "$1" in
+case "${1:-}" in
     help|'')
         usage
         ;;
@@ -1086,9 +1193,9 @@ case "$1" in
         df -h /
         ;;
     set)
-        case "$2" in
+        case "${2:-}" in
             memory|mem)
-                if ! is_positive_int "$3"; then
+                if ! is_positive_int "${3:-}"; then
                     echo "memory must be a positive MiB value"
                     exit 2
                 fi
@@ -1096,12 +1203,29 @@ case "$1" in
                 echo "YlvaOS memory target set to $3 MiB. Reboot YlvaOS to apply."
                 ;;
             disk)
-                if ! is_positive_int "$3"; then
+                if ! is_positive_int "${3:-}"; then
                     echo "disk must be a positive MiB value"
                     exit 2
                 fi
                 ylva-control "set disk $3"
                 echo "YlvaOS disk target set to $3 MiB. Reboot YlvaOS to apply."
+                ;;
+            *)
+                usage
+                exit 2
+                ;;
+        esac
+        ;;
+    setup)
+        case "${2:-}" in
+            audio)
+                /usr/lib/ylvaos/setup-audio
+                ;;
+            font)
+                /usr/lib/ylvaos/setup-font
+                ;;
+            wine)
+                /usr/lib/ylvaos/setup-wine
                 ;;
             *)
                 usage
@@ -1167,16 +1291,32 @@ poweroff -f
     )
 
 
-def upload_script(console: QemuConsole, script: str, prompt: str) -> None:
-    encoded = base64.b64encode(script.encode("utf-8")).decode("ascii")
-    console.run_interactive_command("rm -f /tmp/ylvaos-install.sh /tmp/ylvaos-install.sh.b64", prompt)
-    for index in range(0, len(encoded), 160):
-        chunk = encoded[index : index + 160]
-        console.run_interactive_command(
-            f"printf '%s' '{chunk}' >>/tmp/ylvaos-install.sh.b64",
-            prompt,
-        )
-    console.run_interactive_command("base64 -d /tmp/ylvaos-install.sh.b64 >/tmp/ylvaos-install.sh", prompt)
+def prepare_install_seed(build_dir: Path) -> Path:
+    seed_dir = build_dir / "seed"
+    if seed_dir.exists():
+        shutil.rmtree(seed_dir)
+    seed_dir.mkdir(parents=True)
+    with (seed_dir / "install.sh").open("w", encoding="utf-8", newline="\n") as handle:
+        handle.write(install_script().replace("\r\n", "\n"))
+    return seed_dir
+
+
+def mount_install_seed(console: QemuConsole, prompt: str) -> None:
+    command = (
+        "mkdir -p /tmp/ylvaos-seed; "
+        "mounted=; "
+        "for dev in /dev/vdb /dev/vdb1 /dev/vdc /dev/vdc1 /dev/sda /dev/sda1 /dev/sdb /dev/sdb1; do "
+        "[ -b \"$dev\" ] || continue; "
+        "mount -t vfat -o ro \"$dev\" /tmp/ylvaos-seed >/dev/null 2>&1 && mounted=1 && break; "
+        "done; "
+        "if [ -z \"$mounted\" ]; then "
+        "echo __YLVA_SEED_MOUNT_FAILED__; ls -l /dev/vd* /dev/sd* 2>/dev/null || true; "
+        "else test -f /tmp/ylvaos-seed/install.sh && echo __YLVA_SEED_READY__; fi"
+    )
+    console.run_interactive_command(command, prompt, timeout=45)
+    snapshot = console.snapshot()
+    if "__YLVA_SEED_READY__" not in snapshot:
+        raise RuntimeError("YlvaOS install seed drive was not mounted; see console output above.")
 
 
 def create_preinstalled_disk(root: Path, iso: Path, disk_mib: int, force: bool) -> Path:
@@ -1198,6 +1338,7 @@ def create_preinstalled_disk(root: Path, iso: Path, disk_mib: int, force: bool) 
             return disk
         disk.unlink()
 
+    seed_dir = prepare_install_seed(build_dir)
     run_checked([str(qemu_img), "create", "-f", "qcow2", str(disk), f"{disk_mib}M"], cwd=build_dir)
 
     qemu_args = [
@@ -1223,6 +1364,8 @@ def create_preinstalled_disk(root: Path, iso: Path, disk_mib: int, force: bool) 
         str(iso),
         "-drive",
         f"file={disk},if=virtio,format=qcow2",
+        "-drive",
+        f"file=fat:ro:{seed_dir.as_posix()},if=virtio,format=raw,media=disk,readonly=on",
         "-netdev",
         "user,id=n0",
         "-device",
@@ -1238,8 +1381,8 @@ def create_preinstalled_disk(root: Path, iso: Path, disk_mib: int, force: bool) 
         time.sleep(1.5)
         console.send_chars("export TERM=dumb; PS1='__YLVA_PROMPT__# '\n", char_delay=0.02)
         console.wait_for("__YLVA_PROMPT__#", 30)
-        upload_script(console, install_script(), "__YLVA_PROMPT__#")
-        console.send_chars("sh /tmp/ylvaos-install.sh\n", char_delay=0.003)
+        mount_install_seed(console, "__YLVA_PROMPT__#")
+        console.send_chars("sh /tmp/ylvaos-seed/install.sh\n", char_delay=0.003)
         console.wait_for("__YLVA_INSTALL_DONE__", INSTALL_TIMEOUT_SECONDS)
         if console.process is not None:
             console.process.wait(timeout=120)

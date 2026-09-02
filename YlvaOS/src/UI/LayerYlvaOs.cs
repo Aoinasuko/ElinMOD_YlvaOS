@@ -11,6 +11,8 @@ namespace YlvaOS
     {
         private const int MaxInputLength = 256;
         private const int MaxClipboardPasteLength = 4096;
+        private const int VmPasteCharsPerFrame = 3;
+        private const float VmPasteIntervalSeconds = 0.0125f;
         private static readonly DesktopKeyBinding[] DesktopKeyBindings = new DesktopKeyBinding[]
         {
             new DesktopKeyBinding(KeyCode.LeftShift, 0xffe1),
@@ -137,7 +139,9 @@ namespace YlvaOS
         private int lastDesktopMouseY = -1;
         private int lastDesktopButtonMask = -1;
         private int lastDesktopInputFrame = -1;
+        private float vmPasteTimer;
         private readonly HashSet<uint> downDesktopKeySyms = new HashSet<uint>();
+        private readonly Queue<char> vmPasteQueue = new Queue<char>();
         private readonly Vector3[] desktopWorldCorners = new Vector3[4];
 
         public void Configure(YlvaMachine machine)
@@ -282,6 +286,7 @@ namespace YlvaOS
         public override void OnKill()
         {
             ReleaseAllDesktopKeys();
+            vmPasteQueue.Clear();
             if (machine != null)
             {
                 machine.CurrentInput = inputText;
@@ -348,9 +353,13 @@ namespace YlvaOS
             {
                 StringBuilder builder = new StringBuilder(32);
 
-                if (TryAppendClipboardForVm(builder))
+                if (PumpVmPasteQueue(force: false))
                 {
-                    SendVmBatch(builder);
+                    return;
+                }
+
+                if (TryQueueClipboardForVm())
+                {
                     return;
                 }
 
@@ -752,7 +761,7 @@ namespace YlvaOS
             return true;
         }
 
-        private bool TryAppendClipboardForVm(StringBuilder builder)
+        private bool TryQueueClipboardForVm()
         {
             if (!IsPasteShortcutDown())
             {
@@ -765,30 +774,69 @@ namespace YlvaOS
                 return true;
             }
 
+            vmPasteQueue.Clear();
             foreach (int codePoint in EnumerateCodePoints(NormalizeLineEndings(text)))
             {
                 if (codePoint == '\n')
                 {
-                    builder.Append("\r\n");
+                    vmPasteQueue.Enqueue('\r');
                     continue;
                 }
 
                 if (codePoint == '\b' || codePoint == 0x7f)
                 {
-                    builder.Append('\u007f');
+                    vmPasteQueue.Enqueue('\u007f');
                     continue;
                 }
 
                 if (codePoint == '\t')
                 {
-                    builder.Append('\t');
+                    vmPasteQueue.Enqueue('\t');
                     continue;
                 }
 
                 if (codePoint >= 0x20)
                 {
-                    builder.Append(char.ConvertFromUtf32(codePoint));
+                    string value = char.ConvertFromUtf32(codePoint);
+                    for (int i = 0; i < value.Length; i++)
+                    {
+                        vmPasteQueue.Enqueue(value[i]);
+                    }
                 }
+            }
+
+            vmPasteTimer = 0f;
+            PumpVmPasteQueue(force: true);
+            return true;
+        }
+
+        private bool PumpVmPasteQueue(bool force)
+        {
+            if (vmPasteQueue.Count == 0)
+            {
+                return false;
+            }
+
+            if (!force)
+            {
+                vmPasteTimer -= Time.unscaledDeltaTime;
+                if (vmPasteTimer > 0f)
+                {
+                    return true;
+                }
+            }
+
+            StringBuilder chunk = new StringBuilder(VmPasteCharsPerFrame);
+            while (chunk.Length < VmPasteCharsPerFrame && vmPasteQueue.Count > 0)
+            {
+                chunk.Append(vmPasteQueue.Dequeue());
+            }
+
+            machine.SendRawInput(chunk.ToString());
+            vmPasteTimer = VmPasteIntervalSeconds;
+            if (machine.PumpExternalOutput())
+            {
+                RefreshText();
             }
 
             return true;
@@ -1131,6 +1179,11 @@ namespace YlvaOS
                 if (lastDesktopMode && !desktopMode)
                 {
                     ReleaseAllDesktopKeys();
+                }
+
+                if (lastVmConsoleActive && !vmConsoleActive)
+                {
+                    vmPasteQueue.Clear();
                 }
 
                 lastVmConsoleActive = vmConsoleActive;

@@ -48,7 +48,7 @@ on Alpine Linux.
 The root disk includes, among other dependencies, the Linux kernel package,
 BusyBox, musl libc, OpenRC, apk-tools, util-linux, doas, less, Vim, Wine,
 PulseAudio, ALSA components, FluidSynth, a GM soundfont package, X desktop
-packages, and CJK fonts. These packages are distributed under their own
+packages, CJK fonts, and musl locale data. These packages are distributed under their own
 upstream licenses. The package list in `LEGAL/alpine-installed-packages.txt` is
 the authoritative list for this image build.
 
@@ -105,6 +105,14 @@ the authoritative list for this image build.
   by FluidSynth.
 - Installed packages: see `LEGAL/alpine-installed-packages.txt`
 - Noto CJK upstream source: https://github.com/notofonts/noto-cjk
+- Alpine packaging source:
+  https://gitlab.alpinelinux.org/alpine/aports
+
+## Locale Data
+
+- Components: musl locale data used for Japanese Wine application behavior.
+- Installed packages: see `LEGAL/alpine-installed-packages.txt`
+- musl-locales project: https://git.adelielinux.org/adelie/musl-locales/
 - Alpine packaging source:
   https://gitlab.alpinelinux.org/alpine/aports
 
