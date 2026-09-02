@@ -31,6 +31,7 @@ busybox-openrc-1.37.0-r31 - Size optimized toolbox of many common UNIX utilities
 busybox-suid-1.37.0-r31 - suid binaries of Busybox
 ca-certificates-20260611-r0 - Common CA certificates PEM files from Mozilla
 ca-certificates-bundle-20260611-r0 - Pre generated bundle of Mozilla certificates
+cabextract-1.11-r2 - Tool for extracting Microsoft cabinet files
 cairo-1.18.4-r1 - A vector graphics library
 cairo-gobject-1.18.4-r1 - A vector graphics library (gobject bindings)
 cdparanoia-libs-10.2-r14 - Libraries for libcdda_paranoia (Paranoia III)
@@ -48,6 +49,8 @@ device-mapper-udev-2.03.35-r3 - Device mapper udev rules
 dialog-1.3.20260107-r1 - Script interpreter providing curses widgets
 dmesg-2.42.1-r0 - dmesg tool from util-linux
 doas-6.8.2-r8 - OpenBSD's temporary privilege escalation tool
+dotool-1.5-r18 - Command to simulate input anywhere (X11, Wayland, TTYs)
+dotool-openrc-1.5-r18 - Command to simulate input anywhere (X11, Wayland, TTYs) (OpenRC init scripts)
 e2fsprogs-1.47.4-r0 - Standard Ext2/3/4 filesystem utilities
 e2fsprogs-libs-1.47.4-r0 - Standard Ext2/3/4 filesystem utilities (libraries)
 encodings-1.1.0-r0 - X.org font encoding files
@@ -148,6 +151,7 @@ libmagic-5.47-r2 - File type identification library
 libmd-1.2.0-r0 - Message Digest functions from BSD systems
 libmenuw-6.6_p20260516-r0 - Console display library (libmenuw)
 libmount-2.42.1-r0 - Block device identification library from util-linux
+libmspack-0.11_alpha-r1 - Library for Microsoft CAB compression formats
 libncursesw-6.6_p20260516-r0 - Console display library (libncursesw)
 libogg-1.3.6-r0 - Ogg bitstream and framing library
 libpanelw-6.6_p20260516-r0 - Console display library (libpanelw)
@@ -279,6 +283,7 @@ tint2-17.1.3-r1 - tint2 is a simple unintrusive panel/taskbar
 udev-init-scripts-35-r1 - udev startup scripts for openrc
 udev-init-scripts-openrc-35-r1 - udev startup scripts for openrc (OpenRC init scripts)
 umount-2.42.1-r0 - umount tool from util-linux
+unzip-6.0-r16 - Extract PKZIP-compatible .zip files
 util-linux-2.42.1-r0 - Random collection of Linux utilities
 util-linux-login-2.42.1-r0 - Login utils from util-linux package: newgrp, last, lastb, lastlog2, login, lslogins, nologin, su, sulogin
 util-linux-misc-2.42.1-r0 - Misc binaries for util-linux
@@ -293,6 +298,7 @@ wayland-libs-cursor-1.25.0-r0 - A computer display server protocol (cursor libra
 wayland-libs-egl-1.25.0-r0 - A computer display server protocol (egl library)
 webrtc-audio-processing-1-1.3-r3 - AudioProcessing module from the WebRTC project
 webrtc-audio-processing-2-2.1-r1 - AudioProcessing module from the WebRTC project
+wget-1.25.0-r3 - Network utility to retrieve files from the Web
 wine-11.0-r0 - Compatibility layer for running Windows programs
 wipefs-2.42.1-r0 - Utility to wipe filesystems from device from util-linux
 xauth-1.1.5-r0 - X.Org authorization settings program

@@ -35,6 +35,7 @@ namespace YlvaOS
         private int qmpPort;
         private bool exitedSinceLastStart;
         private bool networkConnected;
+        private int desktopPointerButtonMask;
 
         public YlvaVmBackend(string rootDirectory, string pluginDirectory, ManualLogSource log)
         {
@@ -288,10 +289,48 @@ namespace YlvaOS
 
         public void SendDesktopPointer(int x, int y, int buttonMask)
         {
-            if (EnsureDesktopClient())
+            if (!EnsureDesktopClient())
             {
-                vncClient.SendPointer(x, y, buttonMask);
+                return;
             }
+
+            int nextMask = buttonMask & 31;
+            int previousMask = desktopPointerButtonMask;
+            if (nextMask == previousMask)
+            {
+                vncClient.SendPointer(x, y, nextMask);
+                return;
+            }
+
+            // Keep high-rate movement on VNC, but route button transitions through
+            // the guest X input agent because USB-tablet button delivery is unreliable.
+            vncClient.SendPointer(x, y, 0);
+            string message;
+            if (hostInputServer != null &&
+                hostInputServer.TrySendCommand(
+                    "pointer " + x + " " + y + " " + previousMask + " " + nextMask,
+                    out message))
+            {
+                desktopPointerButtonMask = nextMask;
+                return;
+            }
+
+            if (qmpClient != null &&
+                qmpClient.TrySendPointerButtonState(
+                    x,
+                    y,
+                    config.DesktopWidth,
+                    config.DesktopHeight,
+                    previousMask,
+                    nextMask,
+                    out message))
+            {
+                desktopPointerButtonMask = nextMask;
+                return;
+            }
+
+            vncClient.SendPointer(x, y, nextMask);
+            desktopPointerButtonMask = nextMask;
         }
 
         public bool TryPasteTextToDesktop(string text, out string message)
@@ -381,6 +420,7 @@ namespace YlvaOS
             {
                 ClearOutputQueue();
                 exitedSinceLastStart = false;
+                desktopPointerButtonMask = 0;
                 DisposeSideChannels();
                 controlToken = CreateToken();
                 controlServer = new YlvaControlServer(controlToken, log);
@@ -1082,6 +1122,7 @@ namespace YlvaOS
             vncPort = 0;
             qmpPort = 0;
             networkConnected = false;
+            desktopPointerButtonMask = 0;
             controlToken = string.Empty;
         }
 

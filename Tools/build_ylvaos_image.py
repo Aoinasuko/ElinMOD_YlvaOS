@@ -32,7 +32,7 @@ ALPINE_REPO_MAIN = f"https://dl-cdn.alpinelinux.org/alpine/{ALPINE_BRANCH}/main"
 ALPINE_REPO_COMMUNITY = f"https://dl-cdn.alpinelinux.org/alpine/{ALPINE_BRANCH}/community"
 ALPINE_ISO_URL = f"{ALPINE_RELEASE_BASE}/{ALPINE_ISO}"
 ALPINE_ISO_SHA256 = "e73a6241bd5f3c5c2d4d38c02cc52c378c0415a7c888bd292066bf36e0f41a39"
-YLVAOS_VERSION = "0.02"
+YLVAOS_VERSION = "0.04"
 
 DEFAULT_DISK_MIB = 16384
 INSTALL_TIMEOUT_SECONDS = 1800
@@ -226,6 +226,9 @@ def install_script() -> str:
             "linux-firmware-none",
             "linux-lts",
             "ca-certificates",
+            "wget",
+            "cabextract",
+            "unzip",
             "musl-locales",
             "musl-locales-lang",
             "dbus",
@@ -249,6 +252,7 @@ def install_script() -> str:
             "tint2",
             "pcmanfm",
             "mc",
+            "dotool",
             "xdotool",
             "xdg-utils",
             "xrandr",
@@ -347,6 +351,7 @@ EOF
 cat >/mnt/etc/modules <<'EOF'
 snd-seq
 snd-rawmidi
+uinput
 EOF
 
 mkdir -p /mnt/home/ylva /mnt/etc/doas.d /mnt/etc/profile.d
@@ -455,6 +460,7 @@ export XDG_RUNTIME_DIR="/tmp/ylva-runtime-$user"
 mkdir -p "/tmp/ylva-runtime-$user" "/tmp/ylva-runtime-$user/pulse" 2>/dev/null || true
 chmod 700 "/tmp/ylva-runtime-$user" 2>/dev/null || true
 export PULSE_SERVER="unix:/tmp/ylva-runtime-$user/pulse/native"
+[ -f /usr/lib/ylvaos/wine-env ] && . /usr/lib/ylvaos/wine-env
 ylva-start-audio >/tmp/ylva-audio.log 2>&1 || true
 if command -v ylva-host-agent >/dev/null 2>&1 && ! pgrep -u "\$(id -u)" -f '[y]lva-host-agent' >/dev/null 2>&1; then
     ylva-host-agent >/tmp/ylva-host-agent.log 2>&1 &
@@ -462,6 +468,10 @@ fi
 if [ "\${YLVA_SPLASH_SHOWN:-0}" != 1 ]; then
     export YLVA_SPLASH_SHOWN=1
     ylva-splash 2>/dev/null || true
+fi
+if [ "\${YLVA_UPDATE_NOTICE_SHOWN:-0}" != 1 ]; then
+    export YLVA_UPDATE_NOTICE_SHOWN=1
+    /usr/lib/ylvaos/update-from-mod --check 2>/dev/null || true
 fi
 export PS1='YlvaOS:\w\$ '
 alias poweroff='doas poweroff'
@@ -485,13 +495,7 @@ stty rows 32 cols 140 -ixon 2>/dev/null || true
 EOF
 
 cat >/mnt/etc/profile.d/ylvaos-audio.sh <<'EOF'
-if [ -z "${XDG_RUNTIME_DIR:-}" ]; then
-    ylva_audio_user="$(id -un 2>/dev/null || printf ylva)"
-    export XDG_RUNTIME_DIR="/tmp/ylva-runtime-$ylva_audio_user"
-fi
-mkdir -p "$XDG_RUNTIME_DIR" "$XDG_RUNTIME_DIR/pulse" 2>/dev/null || true
-chmod 700 "$XDG_RUNTIME_DIR" 2>/dev/null || true
-export PULSE_SERVER="${PULSE_SERVER:-unix:$XDG_RUNTIME_DIR/pulse/native}"
+[ -f /usr/lib/ylvaos/wine-env ] && . /usr/lib/ylvaos/wine-env
 export PULSE_PROP="media.role=game"
 EOF
 
@@ -588,6 +592,144 @@ paste_base64() {
     rm -f "$tmp"
 }
 
+pointer_event() {
+    x="$1"
+    y="$2"
+    previous="$3"
+    current="$4"
+    case "$x:$y:$previous:$current" in
+        *[!0-9:]*|'') return 1 ;;
+    esac
+
+    [ -S /tmp/.X11-unix/X0 ] || return 1
+    command -v xdotool >/dev/null 2>&1 || return 1
+    run_xdotool() {
+        printf 'xdotool'
+        printf ' %s' "$@"
+        if DISPLAY=:0 xdotool "$@"; then
+            echo ' -> ok'
+            return 0
+        fi
+        status=$?
+        echo " -> failed ($status)"
+        return "$status"
+    }
+    send_desktop_pointer() {
+        [ -p /tmp/ylva-desktop-input ] || return 1
+        printf '%s\n' "$*" >/tmp/ylva-desktop-input
+    }
+    move_pointer() {
+        run_xdotool mousemove "$1" "$2" || send_desktop_pointer move "$1" "$2"
+    }
+    send_dotool_button() {
+        button="$1"
+        action="$2"
+        command -v dotoolc >/dev/null 2>&1 || return 1
+        [ -p /tmp/dotool-pipe ] || return 1
+        case "$button" in
+            1) name=left ;;
+            2) name=middle ;;
+            3) name=right ;;
+            *) return 1 ;;
+        esac
+        case "$action" in
+            click) command=click ;;
+            down|up) command="button$action" ;;
+            *) return 1 ;;
+        esac
+        if {
+            awk -v x="$x" -v y="$y" -v width="$desktop_width" -v height="$desktop_height" '
+                BEGIN {
+                    if (width < 2) width = 1024
+                    if (height < 2) height = 768
+                    nx = x / (width - 1)
+                    ny = y / (height - 1)
+                    if (nx < 0) nx = 0
+                    if (nx > 1) nx = 1
+                    if (ny < 0) ny = 0
+                    if (ny > 1) ny = 1
+                    printf "mouseto %.8f %.8f\\n", nx, ny
+                }
+            '
+            printf '%s %s\n' "$command" "$name"
+        } | doas dotoolc >/dev/null 2>&1; then
+            echo "dotool $command $name -> ok"
+            return 0
+        fi
+        status=$?
+        echo "dotool $command $name -> failed ($status)"
+        return "$status"
+    }
+
+    echo "pointer $x $y $previous $current"
+    transitioned=0
+    for spec in '1 1' '2 2' '4 3'; do
+        set -- $spec
+        bit="$1"
+        button="$2"
+        was_down=$((previous & bit))
+        is_down=$((current & bit))
+        [ "$was_down" -eq "$is_down" ] && continue
+        transitioned=1
+        if [ "$is_down" -ne 0 ]; then
+            pointer_press_x="$x"
+            pointer_press_y="$y"
+            pointer_press_button="$button"
+            move_pointer "$x" "$y" || true
+            pointer_dotool_button=
+        else
+            delta_x=$((x - ${pointer_press_x:-x}))
+            delta_y=$((y - ${pointer_press_y:-y}))
+            [ "$delta_x" -lt 0 ] && delta_x=$((-delta_x))
+            [ "$delta_y" -lt 0 ] && delta_y=$((-delta_y))
+            if [ "${pointer_dotool_button:-}" = "$button" ]; then
+                send_dotool_button "$button" up || true
+            elif [ "${pointer_press_button:-}" = "$button" ] && [ $((delta_x + delta_y)) -le 6 ]; then
+                if ! send_dotool_button "$button" click; then
+                    # A move to the current tablet coordinate can leave xdotool
+                    # --sync waiting forever. Nudge first so it observes a real
+                    # X pointer transition before sending the click.
+                    if [ "$x" -gt 0 ]; then
+                        nudge_x=$((x - 1))
+                    else
+                        nudge_x=$((x + 1))
+                    fi
+                    run_xdotool mousemove "$nudge_x" "$y" || true
+                    sleep 0.05
+                    run_xdotool mousemove --sync "$x" "$y" click "$button" || true
+                fi
+            else
+                move_pointer "$x" "$y" || true
+            fi
+            pointer_press_button=
+            pointer_dotool_button=
+        fi
+    done
+
+    if [ $((current & 8)) -ne 0 ] && [ $((previous & 8)) -eq 0 ]; then
+        transitioned=1
+        send_desktop_pointer click "$x" "$y" 4 || run_xdotool mousemove "$x" "$y" click 4 || true
+    fi
+    if [ $((current & 16)) -ne 0 ] && [ $((previous & 16)) -eq 0 ]; then
+        transitioned=1
+        send_desktop_pointer click "$x" "$y" 5 || run_xdotool mousemove "$x" "$y" click 5 || true
+    fi
+    if [ "$transitioned" -eq 0 ]; then
+        if [ -n "${pointer_press_button:-}" ] && [ -z "${pointer_dotool_button:-}" ]; then
+            delta_x=$((x - ${pointer_press_x:-x}))
+            delta_y=$((y - ${pointer_press_y:-y}))
+            [ "$delta_x" -lt 0 ] && delta_x=$((-delta_x))
+            [ "$delta_y" -lt 0 ] && delta_y=$((-delta_y))
+            if [ $((delta_x + delta_y)) -gt 6 ] && send_dotool_button "$pointer_press_button" down; then
+                pointer_dotool_button="$pointer_press_button"
+            fi
+        fi
+        # Do not use --sync: the emulated absolute tablet can re-assert a
+        # position one pixel away and leave xdotool waiting forever.
+        move_pointer "$x" "$y" || true
+    fi
+}
+
 handle_line() {
     line="$1"
     prefix="YLVAOS_HOST $token "
@@ -600,12 +742,26 @@ handle_line() {
         paste-b64\ *)
             paste_base64 "${body#paste-b64 }"
             ;;
+        pointer\ *)
+            set -- $body
+            if [ "$#" -eq 5 ]; then
+                pointer_event "$2" "$3" "$4" "$5"
+            fi
+            ;;
     esac
 }
 
 token="$(get_arg ylva_control_token)"
+desktop_width="$(get_arg ylva_desktop_width)"
+desktop_height="$(get_arg ylva_desktop_height)"
+case "$desktop_width" in ''|*[!0-9]*) desktop_width=1024 ;; esac
+case "$desktop_height" in ''|*[!0-9]*) desktop_height=768 ;; esac
 port=/dev/virtio-ports/org.ylvaos.hostinput
 ready_sent=0
+pointer_press_x=
+pointer_press_y=
+pointer_press_button=
+pointer_dotool_button=
 
 while :; do
     if [ -z "$token" ] || [ ! -e "$port" ]; then
@@ -778,7 +934,7 @@ while :; do
         continue
     fi
 
-    parec --device=ylva.monitor --format=s16le --rate=44100 --channels=2 --latency-msec=120 >"$port" 2>/tmp/ylva-audio-bridge.log || sleep 1
+    parec --device=ylva.monitor --format=s16le --rate=44100 --channels=2 --latency-msec=220 >"$port" 2>/tmp/ylva-audio-bridge.log || sleep 1
 done
 EOF
 chmod 0755 /mnt/usr/bin/ylva-audio-bridge
@@ -797,7 +953,7 @@ mkdir -p "$runtime" "$runtime/pulse"
 chmod 700 "$runtime" 2>/dev/null || true
 
 if ! pulseaudio --check >/dev/null 2>&1; then
-    pulseaudio --daemonize=yes --exit-idle-time=-1 --log-target=file:/tmp/ylva-pulseaudio.log >/dev/null 2>&1 || true
+    pulseaudio --daemonize=yes --exit-idle-time=-1 --realtime=false --log-target=file:/tmp/ylva-pulseaudio.log >/dev/null 2>&1 || true
 fi
 
 for _ in 1 2 3 4 5 6 7 8 9 10; do
@@ -816,6 +972,7 @@ for _ in 1 2 3; do
 done
 
 pactl set-default-sink ylva >/dev/null 2>&1 || true
+pactl set-sink-volume ylva 100% >/dev/null 2>&1 || true
 
 if command -v ylva-audio-bridge >/dev/null 2>&1; then
     if pgrep -f '/usr/bin/ylva-audio-bridge' >/dev/null 2>&1; then
@@ -858,17 +1015,80 @@ fi
 
 if [ -n "$soundfont" ] && [ -f "$soundfont" ] && ! pgrep -u "$(id -u)" fluidsynth >/dev/null 2>&1; then
     load_alsa_sequencer
-    fluidsynth -s -i -a pulseaudio -m alsa_seq -o midi.autoconnect=1 -o audio.period-size=2048 -o audio.periods=4 "$soundfont" >/tmp/ylva-fluidsynth.log 2>&1 &
+    fluidsynth -s -i -a pulseaudio -m alsa_seq -g 1.0 -o midi.autoconnect=1 -o audio.period-size=4096 -o audio.periods=8 "$soundfont" >/tmp/ylva-fluidsynth.log 2>&1 &
 fi
 
+rm -f /tmp/ylva-fluidsynth-port /tmp/ylva-fluidsynth-index
 for _ in 1 2 3 4 5 6 7 8 9 10; do
     if aplaymidi -l 2>/dev/null | grep -q 'FLUID Synth'; then
+        aplaymidi -l 2>/dev/null | awk '
+            NR == 1 { next }
+            NF == 0 { next }
+            {
+                if ($0 ~ /FLUID Synth/) {
+                    print $1 > "/tmp/ylva-fluidsynth-port"
+                    print device_index > "/tmp/ylva-fluidsynth-index"
+                    found = 1
+                    exit
+                }
+                device_index++
+            }
+            END { exit found ? 0 : 1 }
+        ' || true
         break
     fi
     sleep 1
 done
+
+if command -v ylva-midi-bridge >/dev/null 2>&1 && ! pgrep -u "$(id -u)" -f '[y]lva-midi-bridge' >/dev/null 2>&1; then
+    ylva-midi-bridge >/tmp/ylva-midi-bridge.log 2>&1 &
+fi
 EOF
 chmod 0755 /mnt/usr/bin/ylva-start-audio
+
+cat >/mnt/usr/bin/ylva-midi-bridge <<'EOF'
+#!/bin/sh
+set -u
+export PATH=/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+
+find_synth_port() {
+    if [ -s /tmp/ylva-fluidsynth-port ]; then
+        cat /tmp/ylva-fluidsynth-port
+        return 0
+    fi
+
+    aplaymidi -l 2>/dev/null | awk '/FLUID Synth/ { print $1; exit }'
+}
+
+list_source_ports() {
+    aconnect -o 2>/dev/null | awk '
+        /^client / {
+            client = $2
+            sub(":", "", client)
+            name = $0
+            next
+        }
+        /^[[:space:]]+[0-9]+[[:space:]]/ {
+            port = $1
+            if (name ~ /WINE|wine|Midi Through/) {
+                print client ":" port
+            }
+        }
+    '
+}
+
+while :; do
+    synth_port="$(find_synth_port 2>/dev/null || true)"
+    if [ -n "$synth_port" ]; then
+        for source_port in $(list_source_ports); do
+            [ "$source_port" = "$synth_port" ] && continue
+            aconnect "$source_port" "$synth_port" >/dev/null 2>&1 || true
+        done
+    fi
+    sleep 1
+done
+EOF
+chmod 0755 /mnt/usr/bin/ylva-midi-bridge
 
 mkdir -p /mnt/etc/local.d
 cat >/mnt/etc/local.d/ylva-audio.start <<'EOF'
@@ -879,6 +1099,22 @@ exit 0
 EOF
 chmod 0755 /mnt/etc/local.d/ylva-audio.start
 
+cat >/mnt/etc/local.d/ylva-input.start <<'EOF'
+#!/bin/sh
+modprobe uinput >/tmp/ylva-dotool.log 2>&1 || true
+rm -f /tmp/dotool-pipe
+if command -v dotoold >/dev/null 2>&1; then
+    DOTOOL_XKB_LAYOUT=us dotoold >>/tmp/ylva-dotool.log 2>&1 &
+    for _ in 1 2 3 4 5; do
+        [ -p /tmp/dotool-pipe ] && break
+        sleep 1
+    done
+    chmod 0666 /tmp/dotool-pipe >/dev/null 2>&1 || true
+fi
+exit 0
+EOF
+chmod 0755 /mnt/etc/local.d/ylva-input.start
+
 mkdir -p /mnt/usr/lib/ylvaos
 cat >/mnt/usr/lib/ylvaos/wine-env <<'EOF'
 export MUSL_LOCPATH=/usr/share/i18n/locales/musl
@@ -887,7 +1123,8 @@ export LC_CTYPE=ja_JP.UTF-8
 export LC_MESSAGES=C.UTF-8
 export WINEPREFIX="${WINEPREFIX:-$HOME/.wine}"
 export WINEDLLOVERRIDES="${WINEDLLOVERRIDES:-mscoree,mshtml=}"
-export PULSE_LATENCY_MSEC="${PULSE_LATENCY_MSEC:-120}"
+export WINEDEBUG="${WINEDEBUG:--all}"
+export PULSE_LATENCY_MSEC="${PULSE_LATENCY_MSEC:-220}"
 if [ -z "${XDG_RUNTIME_DIR:-}" ]; then
     ylva_audio_user="$(id -un 2>/dev/null || printf ylva)"
     export XDG_RUNTIME_DIR="/tmp/ylva-runtime-$ylva_audio_user"
@@ -895,7 +1132,109 @@ fi
 mkdir -p "$XDG_RUNTIME_DIR" "$XDG_RUNTIME_DIR/pulse" 2>/dev/null || true
 chmod 700 "$XDG_RUNTIME_DIR" 2>/dev/null || true
 export PULSE_SERVER="${PULSE_SERVER:-unix:$XDG_RUNTIME_DIR/pulse/native}"
+if [ -f /tmp/ylva-fluidsynth-port ]; then
+    export ALSA_OUTPUT_PORTS="$(cat /tmp/ylva-fluidsynth-port 2>/dev/null || true)"
+fi
 EOF
+
+cat >/mnt/usr/lib/ylvaos/registry-helpers <<'EOF'
+#!/bin/sh
+
+ensure_reg_file() {
+    file="$1"
+    mkdir -p "$(dirname "$file")" 2>/dev/null || true
+    if [ ! -s "$file" ]; then
+        printf 'WINE REGISTRY Version 2\n\n' >"$file"
+    fi
+}
+
+write_reg_section() {
+    file="$1"
+    section="$2"
+    tmp="$file.tmp"
+    body="$(cat)"
+
+    ensure_reg_file "$file"
+    awk -v target="[$section]" '
+        /^\[/ { skip = ($0 == target) }
+        !skip { print }
+    ' "$file" >"$tmp" && mv "$tmp" "$file"
+
+    {
+        printf '\n[%s] %s\n' "$section" "$(date +%s)"
+        printf '%s\n' "$body"
+    } >>"$file"
+}
+EOF
+
+cat >/mnt/usr/lib/ylvaos/configure-wine-midi <<'EOF'
+#!/bin/sh
+set -u
+. /usr/lib/ylvaos/wine-env
+. /usr/lib/ylvaos/registry-helpers
+
+mkdir -p "$WINEPREFIX"
+if [ ! -f "$WINEPREFIX/system.reg" ] && [ -z "${DISPLAY:-}" ]; then
+    echo "Wine prefix is not initialized yet; run YlvaOS setup wine first."
+    exit 0
+fi
+
+if [ ! -f /tmp/ylva-fluidsynth-index ] || [ ! -f /tmp/ylva-fluidsynth-port ]; then
+    ylva-start-audio >/tmp/ylva-audio.log 2>&1 || true
+fi
+
+midi_index="$(cat /tmp/ylva-fluidsynth-index 2>/dev/null || printf 0)"
+case "$midi_index" in
+    ''|*[!0-9]* ) midi_index=0 ;;
+esac
+
+target="#$midi_index"
+marker="$WINEPREFIX/.ylvaos-midi-target"
+if [ -f "$marker" ] && [ "$(cat "$marker" 2>/dev/null || true)" = "$target" ] && grep -Fq "\"CurrentInstrument\"=\"$target\"" "$WINEPREFIX/user.reg" 2>/dev/null; then
+    exit 0
+fi
+
+write_reg_section "$WINEPREFIX/user.reg" 'Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Multimedia\\\\MIDIMap' <<REG_MIDI
+"UseScheme"=dword:00000000
+"AutoScheme"=dword:00000000
+"CurrentInstrument"="$target"
+REG_MIDI
+
+printf '%s\n' "$target" >"$marker" 2>/dev/null || true
+echo "Wine MIDI output is mapped to FluidSynth device $target."
+EOF
+chmod 0755 /mnt/usr/lib/ylvaos/configure-wine-midi
+
+cat >/mnt/usr/local/bin/wine <<'EOF'
+#!/bin/sh
+set -u
+. /usr/lib/ylvaos/wine-env
+case "${1:-}" in
+    --version|--help|-h)
+        exec /usr/bin/wine "$@"
+        ;;
+esac
+ylva-start-audio >/tmp/ylva-audio.log 2>&1 || true
+if [ -f "$WINEPREFIX/system.reg" ] || [ -n "${DISPLAY:-}" ]; then
+    /usr/lib/ylvaos/configure-wine-midi >/tmp/ylva-wine-midi.log 2>&1 || true
+fi
+exec /usr/bin/wine "$@"
+EOF
+chmod 0755 /mnt/usr/local/bin/wine
+
+for tool in wineboot winecfg wineconsole winefile regedit regsvr32 wineserver; do
+    cat >"/mnt/usr/local/bin/$tool" <<EOF
+#!/bin/sh
+set -u
+. /usr/lib/ylvaos/wine-env
+ylva-start-audio >/tmp/ylva-audio.log 2>&1 || true
+if [ -f "\$WINEPREFIX/system.reg" ] || [ -n "\${DISPLAY:-}" ]; then
+    /usr/lib/ylvaos/configure-wine-midi >/tmp/ylva-wine-midi.log 2>&1 || true
+fi
+exec /usr/bin/$tool "\$@"
+EOF
+    chmod 0755 "/mnt/usr/local/bin/$tool"
+done
 
 cat >/mnt/usr/lib/ylvaos/setup-audio <<'EOF'
 #!/bin/sh
@@ -931,16 +1270,25 @@ cat >/mnt/usr/lib/ylvaos/setup-font <<'EOF'
 #!/bin/sh
 set -u
 . /usr/lib/ylvaos/wine-env
+. /usr/lib/ylvaos/registry-helpers
 
+mkdir -p "$WINEPREFIX"
 fc-cache -f >/tmp/ylva-font-cache.log 2>&1 || true
-wine reg add 'HKLM\\Software\\Microsoft\\Windows NT\\CurrentVersion\\FontSubstitutes' /v 'MS Gothic' /d 'Noto Sans CJK JP' /f >/dev/null 2>&1 || true
-wine reg add 'HKLM\\Software\\Microsoft\\Windows NT\\CurrentVersion\\FontSubstitutes' /v 'MS PGothic' /d 'Noto Sans CJK JP' /f >/dev/null 2>&1 || true
-wine reg add 'HKLM\\Software\\Microsoft\\Windows NT\\CurrentVersion\\FontSubstitutes' /v 'MS UI Gothic' /d 'Noto Sans CJK JP' /f >/dev/null 2>&1 || true
-wine reg add 'HKLM\\Software\\Microsoft\\Windows NT\\CurrentVersion\\FontSubstitutes' /v 'MS Mincho' /d 'Noto Serif CJK JP' /f >/dev/null 2>&1 || true
-wine reg add 'HKCU\\Software\\Wine\\Fonts\\Replacements' /v 'MS Gothic' /d 'Noto Sans CJK JP' /f >/dev/null 2>&1 || true
-wine reg add 'HKCU\\Software\\Wine\\Fonts\\Replacements' /v 'MS PGothic' /d 'Noto Sans CJK JP' /f >/dev/null 2>&1 || true
-wine reg add 'HKCU\\Software\\Wine\\Fonts\\Replacements' /v 'MS UI Gothic' /d 'Noto Sans CJK JP' /f >/dev/null 2>&1 || true
-wine reg add 'HKCU\\Software\\Wine\\Fonts\\Replacements' /v 'MS Mincho' /d 'Noto Serif CJK JP' /f >/dev/null 2>&1 || true
+
+write_reg_section "$WINEPREFIX/system.reg" 'Software\\\\Microsoft\\\\Windows NT\\\\CurrentVersion\\\\FontSubstitutes' <<'REG_FONT_SYS'
+"MS Gothic"="Noto Sans CJK JP"
+"MS PGothic"="Noto Sans CJK JP"
+"MS UI Gothic"="Noto Sans CJK JP"
+"MS Mincho"="Noto Serif CJK JP"
+REG_FONT_SYS
+
+write_reg_section "$WINEPREFIX/user.reg" 'Software\\\\Wine\\\\Fonts\\\\Replacements' <<'REG_FONT_USER'
+"MS Gothic"="Noto Sans CJK JP"
+"MS PGothic"="Noto Sans CJK JP"
+"MS UI Gothic"="Noto Sans CJK JP"
+"MS Mincho"="Noto Serif CJK JP"
+REG_FONT_USER
+
 echo "YlvaOS fonts are ready."
 EOF
 chmod 0755 /mnt/usr/lib/ylvaos/setup-font
@@ -949,30 +1297,196 @@ cat >/mnt/usr/lib/ylvaos/setup-wine <<'EOF'
 #!/bin/sh
 set -u
 . /usr/lib/ylvaos/wine-env
+. /usr/lib/ylvaos/registry-helpers
 
-marker="$WINEPREFIX/.ylvaos-jp-wine-v5"
+marker="$WINEPREFIX/.ylvaos-jp-wine-v7"
+directmusic_marker="$WINEPREFIX/.ylvaos-directmusic-runtime-v2"
+directmusic_requested="${1:-}"
+
+as_root() {
+    if [ "$(id -u)" -eq 0 ]; then
+        "$@"
+    else
+        doas "$@"
+    fi
+}
+
+has_network() {
+    ip route 2>/dev/null | grep -q '^default '
+}
+
+install_winetricks() {
+    if command -v winetricks >/dev/null 2>&1; then
+        return 0
+    fi
+
+    if ! has_network; then
+        echo "DirectMusic setup needs Internet access. Run ConnectNetwork first, type yes, then run YlvaOS setup wine directmusic again."
+        return 1
+    fi
+
+    as_root apk update >/tmp/ylva-winetricks-apk-update.log 2>&1 || true
+    as_root apk add cabextract unzip wget >/tmp/ylva-winetricks-apk.log 2>&1 || true
+    if as_root apk add winetricks >>/tmp/ylva-winetricks-apk.log 2>&1; then
+        return 0
+    fi
+
+    if command -v wget >/dev/null 2>&1; then
+        as_root mkdir -p /usr/local/bin
+        as_root wget -O /usr/local/bin/winetricks https://raw.githubusercontent.com/Winetricks/winetricks/master/src/winetricks >/tmp/ylva-winetricks-download.log 2>&1 || return 1
+        as_root chmod 0755 /usr/local/bin/winetricks
+        command -v winetricks >/dev/null 2>&1
+        return $?
+    fi
+
+    return 1
+}
+
+maybe_setup_directmusic() {
+    if [ "$directmusic_requested" != directmusic ]; then
+        return 0
+    fi
+
+    if [ -f "$directmusic_marker" ]; then
+        return 0
+    fi
+
+    answer="${YLVAOS_INSTALL_DIRECTMUSIC:-}"
+    if [ -z "$answer" ] && [ -t 0 ]; then
+        cat <<'DM_WARN'
+YlvaOS can install legacy Microsoft DirectMusic components through winetricks.
+This may improve MIDI playback in old Windows games, but it downloads and installs third-party Microsoft runtime files into this Wine prefix.
+Only continue if you understand and accept the licensing and security implications.
+Type yes to install DirectMusic now, or press Enter to skip.
+DM_WARN
+        printf '> '
+        IFS= read -r answer || answer=
+    fi
+
+    if [ "$answer" != yes ]; then
+        echo "DirectMusic runtime setup skipped."
+        return 0
+    fi
+
+    if ! install_winetricks; then
+        echo "DirectMusic runtime setup could not prepare winetricks."
+        return 1
+    fi
+
+    winetricks -q directmusic gmdls >/tmp/ylva-winetricks-directmusic.log 2>&1 || {
+        echo "DirectMusic runtime setup failed. See /tmp/ylva-winetricks-directmusic.log."
+        return 1
+    }
+
+    touch "$directmusic_marker"
+    echo "DirectMusic runtime is ready for this Wine prefix."
+}
+
+print_directmusic_hint() {
+    if [ "$directmusic_requested" = directmusic ] || [ -f "$directmusic_marker" ]; then
+        return 0
+    fi
+
+    cat <<'DM_HINT'
+For MIDI music in legacy DirectMusic games such as Elona, run:
+  ConnectNetwork
+  YlvaOS setup wine directmusic
+DM_HINT
+}
+
+apply_wine_registry_settings() {
+    write_reg_section "$WINEPREFIX/user.reg" 'Software\\\\Wine\\\\Drivers' <<'REG_WINE_DRIVERS'
+"Audio"="pulse"
+REG_WINE_DRIVERS
+
+    write_reg_section "$WINEPREFIX/user.reg" 'Software\\\\Wine\\\\DirectSound' <<'REG_WINE_DSOUND'
+"HardwareAcceleration"="Emulation"
+"DefaultSampleRate"="44100"
+"DefaultBitsPerSample"="16"
+REG_WINE_DSOUND
+
+    /usr/lib/ylvaos/configure-wine-midi >/tmp/ylva-wine-midi.log 2>&1 || true
+
+    write_reg_section "$WINEPREFIX/user.reg" 'Control Panel\\\\International' <<'REG_WINE_INTL'
+"LocaleName"="ja-JP"
+"sCountry"="Japan"
+"sLanguage"="JPN"
+REG_WINE_INTL
+
+    write_reg_section "$WINEPREFIX/system.reg" 'System\\\\CurrentControlSet\\\\Control\\\\Nls\\\\CodePage' <<'REG_WINE_CODEPAGE'
+"ACP"="932"
+"OEMCP"="932"
+"MACCP"="10001"
+REG_WINE_CODEPAGE
+
+    write_reg_section "$WINEPREFIX/system.reg" 'System\\\\CurrentControlSet\\\\Control\\\\Nls\\\\Language' <<'REG_WINE_LANGUAGE'
+"Default"="0411"
+"InstallLanguage"="0411"
+REG_WINE_LANGUAGE
+
+    /usr/lib/ylvaos/setup-font >/tmp/ylva-font-setup.log 2>&1 || true
+
+    # Wine owns the in-memory registry once wineserver starts. Import the same
+    # values through reg.exe so existing prefixes and the live registry agree.
+    : >/tmp/ylva-wine-registry.log
+    wine_reg_add() {
+        timeout 30 /usr/bin/wine reg add "$@" /f >>/tmp/ylva-wine-registry.log 2>&1
+    }
+
+    wine_reg_add 'HKCU\\Software\\Wine\\Drivers' /v Audio /t REG_SZ /d pulse || true
+    wine_reg_add 'HKCU\\Software\\Wine\\DirectSound' /v HardwareAcceleration /t REG_SZ /d Emulation || true
+    wine_reg_add 'HKCU\\Software\\Wine\\DirectSound' /v DefaultSampleRate /t REG_SZ /d 44100 || true
+    wine_reg_add 'HKCU\\Software\\Wine\\DirectSound' /v DefaultBitsPerSample /t REG_SZ /d 16 || true
+    wine_reg_add 'HKCU\\Control Panel\\International' /v LocaleName /t REG_SZ /d ja-JP || true
+    wine_reg_add 'HKCU\\Control Panel\\International' /v sCountry /t REG_SZ /d Japan || true
+    wine_reg_add 'HKCU\\Control Panel\\International' /v sLanguage /t REG_SZ /d JPN || true
+    wine_reg_add 'HKLM\\System\\CurrentControlSet\\Control\\Nls\\CodePage' /v ACP /t REG_SZ /d 932 || true
+    wine_reg_add 'HKLM\\System\\CurrentControlSet\\Control\\Nls\\CodePage' /v OEMCP /t REG_SZ /d 932 || true
+    wine_reg_add 'HKLM\\System\\CurrentControlSet\\Control\\Nls\\CodePage' /v MACCP /t REG_SZ /d 10001 || true
+    wine_reg_add 'HKLM\\System\\CurrentControlSet\\Control\\Nls\\Language' /v Default /t REG_SZ /d 0411 || true
+    wine_reg_add 'HKLM\\System\\CurrentControlSet\\Control\\Nls\\Language' /v InstallLanguage /t REG_SZ /d 0411 || true
+
+    for font_name in 'MS Gothic' 'MS PGothic' 'MS UI Gothic'; do
+        wine_reg_add 'HKLM\\Software\\Microsoft\\Windows NT\\CurrentVersion\\FontSubstitutes' /v "$font_name" /t REG_SZ /d 'Noto Sans CJK JP' || true
+        wine_reg_add 'HKCU\\Software\\Wine\\Fonts\\Replacements' /v "$font_name" /t REG_SZ /d 'Noto Sans CJK JP' || true
+    done
+    wine_reg_add 'HKLM\\Software\\Microsoft\\Windows NT\\CurrentVersion\\FontSubstitutes' /v 'MS Mincho' /t REG_SZ /d 'Noto Serif CJK JP' || true
+    wine_reg_add 'HKCU\\Software\\Wine\\Fonts\\Replacements' /v 'MS Mincho' /t REG_SZ /d 'Noto Serif CJK JP' || true
+
+    midi_target="$(cat "$WINEPREFIX/.ylvaos-midi-target" 2>/dev/null || true)"
+    if [ -n "$midi_target" ]; then
+        wine_reg_add 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Multimedia\\MIDIMap' /v UseScheme /t REG_DWORD /d 0 || true
+        wine_reg_add 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Multimedia\\MIDIMap' /v AutoScheme /t REG_DWORD /d 0 || true
+        wine_reg_add 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Multimedia\\MIDIMap' /v CurrentInstrument /t REG_SZ /d "$midi_target" || true
+    fi
+    timeout 15 /usr/bin/wineserver -w >>/tmp/ylva-wine-registry.log 2>&1 || true
+}
+
 if [ -f "$marker" ]; then
+    /usr/lib/ylvaos/setup-audio >/tmp/ylva-audio.log 2>&1 || true
+    apply_wine_registry_settings
     echo "Wine prefix is ready at $WINEPREFIX."
+    if [ "$directmusic_requested" = directmusic ]; then
+        maybe_setup_directmusic
+    else
+        print_directmusic_hint
+    fi
     exit 0
 fi
 
 mkdir -p "$WINEPREFIX"
 /usr/lib/ylvaos/setup-audio >/tmp/ylva-audio.log 2>&1 || true
-wineboot -u >/tmp/ylva-wineboot.log 2>&1 || true
-
-wine reg add 'HKCU\\Software\\Wine\\Drivers' /v Audio /d alsa /f >/dev/null 2>&1 || true
-wine reg add 'HKCU\\Control Panel\\International' /v LocaleName /d ja-JP /f >/dev/null 2>&1 || true
-wine reg add 'HKCU\\Control Panel\\International' /v sCountry /d Japan /f >/dev/null 2>&1 || true
-wine reg add 'HKCU\\Control Panel\\International' /v sLanguage /d JPN /f >/dev/null 2>&1 || true
-wine reg add 'HKLM\\System\\CurrentControlSet\\Control\\Nls\\CodePage' /v ACP /d 932 /f >/dev/null 2>&1 || true
-wine reg add 'HKLM\\System\\CurrentControlSet\\Control\\Nls\\CodePage' /v OEMCP /d 932 /f >/dev/null 2>&1 || true
-wine reg add 'HKLM\\System\\CurrentControlSet\\Control\\Nls\\CodePage' /v MACCP /d 10001 /f >/dev/null 2>&1 || true
-wine reg add 'HKLM\\System\\CurrentControlSet\\Control\\Nls\\Language' /v Default /d 0411 /f >/dev/null 2>&1 || true
-wine reg add 'HKLM\\System\\CurrentControlSet\\Control\\Nls\\Language' /v InstallLanguage /d 0411 /f >/dev/null 2>&1 || true
-/usr/lib/ylvaos/setup-font >/tmp/ylva-font-setup.log 2>&1 || true
+timeout 45 /usr/bin/wineboot -u >/tmp/ylva-wineboot.log 2>&1 || true
+timeout 15 /usr/bin/wineserver -w >/tmp/ylva-wineserver-wait.log 2>&1 || true
+apply_wine_registry_settings
 
 touch "$marker"
 echo "Wine prefix is ready at $WINEPREFIX."
+if [ "$directmusic_requested" = directmusic ]; then
+    maybe_setup_directmusic
+else
+    print_directmusic_hint
+fi
 EOF
 chmod 0755 /mnt/usr/lib/ylvaos/setup-wine
 
@@ -980,6 +1494,16 @@ cat >/mnt/usr/lib/ylvaos/update-from-mod <<'EOF'
 #!/bin/sh
 set -u
 export PATH=/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+
+check_only=0
+case "${1:-}" in
+    --check) check_only=1 ;;
+    '') ;;
+    *)
+        echo "usage: update-from-mod [--check]"
+        exit 2
+        ;;
+esac
 
 as_root() {
     if [ "$(id -u)" -eq 0 ]; then
@@ -1052,6 +1576,9 @@ current_version="$(read_release_value /etc/ylvaos-release YLVAOS_VERSION)"
 current_version="${current_version:-0.00}"
 
 if ! find_update_source "$mount_dir"; then
+    if [ "$check_only" -eq 1 ]; then
+        exit 0
+    fi
     echo "No YlvaOS MOD update source was found."
     echo "Install a newer MOD package that contains vm/update, then start YlvaOS again."
     exit 1
@@ -1060,22 +1587,42 @@ fi
 target_version="$(read_release_value "$mount_dir/ylvaos-release" YLVAOS_VERSION)"
 target_alpine="$(read_release_value "$mount_dir/ylvaos-release" ALPINE_VERSION)"
 if [ -z "$target_version" ]; then
+    if [ "$check_only" -eq 1 ]; then
+        exit 0
+    fi
     echo "The YlvaOS MOD update source is missing ylvaos-release."
     exit 1
 fi
 
-echo "Installed: YlvaOS $current_version"
-echo "Bundled:   Alpine Linux ${target_alpine:-unknown} base / YlvaOS $target_version"
-
 if ! version_gt "$current_version" "$target_version"; then
-    echo "YlvaOS is already up to date."
+    if [ "$check_only" -eq 0 ]; then
+        echo "Installed: YlvaOS $current_version"
+        echo "Bundled:   Alpine Linux ${target_alpine:-unknown} base / YlvaOS $target_version"
+        echo "YlvaOS is already up to date."
+    fi
     exit 0
 fi
 
 if [ ! -f "$mount_dir/rootfs-overlay.tar.gz" ] || [ ! -f "$mount_dir/update.sh" ]; then
+    if [ "$check_only" -eq 1 ]; then
+        exit 0
+    fi
     echo "The YlvaOS MOD update source is incomplete."
     exit 1
 fi
+
+if [ "$check_only" -eq 1 ]; then
+    echo
+    echo "A YlvaOS update is available from the installed MOD."
+    echo "Installed: YlvaOS $current_version"
+    echo "Bundled:   Alpine Linux ${target_alpine:-unknown} base / YlvaOS $target_version"
+    echo 'Run "YlvaOS update" to install it. YlvaOS will restart automatically.'
+    echo
+    exit 0
+fi
+
+echo "Installed: YlvaOS $current_version"
+echo "Bundled:   Alpine Linux ${target_alpine:-unknown} base / YlvaOS $target_version"
 
 echo "Updating YlvaOS-managed OS files from the MOD package..."
 if [ "$(id -u)" -eq 0 ]; then
@@ -1212,8 +1759,8 @@ show_status() {
     echo
     printf 'User: %s\n' "$(id -un 2>/dev/null || printf ylva)"
     printf 'Kernel: %s\n' "$(uname -r)"
-    awk '/^MemTotal:/ { printf "Guest memory: %.0f MiB\n", $2 / 1024 }' /proc/meminfo 2>/dev/null || true
-    df -h / 2>/dev/null | awk 'NR==2 { printf "Root disk: %s used / %s total (%s)\n", $3, $2, $5 }' || true
+    awk '/^MemTotal:/ { printf "Guest memory: %.0f MiB\\n", $2 / 1024 }' /proc/meminfo 2>/dev/null || true
+    df -h / 2>/dev/null | awk 'NR==2 { printf "Root disk: %s used / %s total (%s)\\n", $3, $2, $5 }' || true
     if ip route 2>/dev/null | grep -q '^default '; then
         echo "Network: connected for this VM session"
     else
@@ -1322,10 +1869,59 @@ EOF
 chmod 0755 /mnt/usr/bin/Settings
 ln -sf /usr/bin/Settings /mnt/usr/bin/settings
 
+cat >/mnt/usr/bin/ylva-desktop-input-agent <<'EOF'
+#!/bin/sh
+set -u
+export PATH=/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+export DISPLAY=:0
+
+fifo=/tmp/ylva-desktop-input
+rm -f "$fifo"
+mkfifo -m 0600 "$fifo"
+exec 3<>"$fifo"
+
+run_xdotool() {
+    printf 'xdotool'
+    printf ' %s' "$@"
+    if xdotool "$@"; then
+        echo ' -> ok'
+        return 0
+    fi
+    status=$?
+    echo " -> failed ($status)"
+    return "$status"
+}
+
+while IFS=' ' read -r action x y button <&3; do
+    case "$x:$y" in
+        *[!0-9:]*|'') continue ;;
+    esac
+    case "$action" in
+        move)
+            run_xdotool mousemove "$x" "$y" || true
+            ;;
+        click)
+            case "${button:-}" in 1|2|3|4|5) ;; *) continue ;; esac
+            if [ "$x" -gt 0 ]; then
+                nudge_x=$((x - 1))
+            else
+                nudge_x=$((x + 1))
+            fi
+            if setsid sh -c "unset XAUTHORITY; DISPLAY=:0 xdotool mousemove $nudge_x $y; sleep 0.05; DISPLAY=:0 xdotool mousemove --sync $x $y click $button"; then
+                echo "setsid click $x $y $button -> ok"
+            else
+                echo "setsid click $x $y $button -> failed ($?)"
+            fi
+            ;;
+    esac
+done
+EOF
+chmod 0755 /mnt/usr/bin/ylva-desktop-input-agent
+
 cat >/mnt/usr/local/bin/ylva-desktop-session <<'EOF'
 #!/bin/sh
 set -u
-export PATH=/sbin:/bin:/usr/sbin:/usr/bin
+export PATH=/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
 export SHELL=/bin/ash
 
 get_arg() {
@@ -1350,6 +1946,12 @@ mkdir -p "$XDG_RUNTIME_DIR" "$XDG_RUNTIME_DIR/pulse" "$home/.config/openbox" "$h
 chmod 700 "$XDG_RUNTIME_DIR" 2>/dev/null || true
 export PULSE_SERVER="unix:$XDG_RUNTIME_DIR/pulse/native"
 ylva-start-audio >/tmp/ylva-audio.log 2>&1 || true
+if [ -s /tmp/ylva-desktop-input.pid ]; then
+    kill "$(cat /tmp/ylva-desktop-input.pid)" >/dev/null 2>&1 || true
+fi
+rm -f /tmp/ylva-desktop-input /tmp/ylva-desktop-input.pid
+ylva-desktop-input-agent >/tmp/ylva-desktop-input.log 2>&1 &
+echo $! >/tmp/ylva-desktop-input.pid
 
 cat >"$home/.Xresources" <<'EOF_XRES'
 XTerm*faceName: DejaVu Sans Mono
@@ -1388,9 +1990,20 @@ cat >"$home/.config/openbox/rc.xml" <<'EOF_OBRC'
   </keyboard>
   <mouse>
     <context name="Frame">
-      <mousebind button="Left" action="Press">
+      <mousebind button="A-Left" action="Press">
         <action name="Focus"/>
         <action name="Raise"/>
+      </mousebind>
+      <mousebind button="A-Left" action="Drag">
+        <action name="Move"/>
+      </mousebind>
+      <mousebind button="A-Right" action="Press">
+        <action name="Focus"/>
+        <action name="Raise"/>
+        <action name="Unshade"/>
+      </mousebind>
+      <mousebind button="A-Right" action="Drag">
+        <action name="Resize"/>
       </mousebind>
     </context>
     <context name="Titlebar">
@@ -1425,11 +2038,20 @@ cat >"$home/.config/openbox/rc.xml" <<'EOF_OBRC'
       </mousebind>
     </context>
     <context name="Iconify">
+      <mousebind button="Left" action="Press">
+        <action name="Focus"/>
+        <action name="Raise"/>
+      </mousebind>
       <mousebind button="Left" action="Click">
         <action name="Iconify"/>
       </mousebind>
     </context>
     <context name="Maximize">
+      <mousebind button="Left" action="Press">
+        <action name="Focus"/>
+        <action name="Raise"/>
+        <action name="Unshade"/>
+      </mousebind>
       <mousebind button="Left" action="Click">
         <action name="ToggleMaximize"/>
       </mousebind>
@@ -1445,8 +2067,27 @@ cat >"$home/.config/openbox/rc.xml" <<'EOF_OBRC'
       </mousebind>
     </context>
     <context name="Close">
+      <mousebind button="Left" action="Press">
+        <action name="Focus"/>
+        <action name="Raise"/>
+        <action name="Unshade"/>
+      </mousebind>
       <mousebind button="Left" action="Click">
         <action name="Close"/>
+      </mousebind>
+    </context>
+    <context name="Client">
+      <mousebind button="Left" action="Press">
+        <action name="Focus"/>
+        <action name="Raise"/>
+      </mousebind>
+      <mousebind button="Middle" action="Press">
+        <action name="Focus"/>
+        <action name="Raise"/>
+      </mousebind>
+      <mousebind button="Right" action="Press">
+        <action name="Focus"/>
+        <action name="Raise"/>
       </mousebind>
     </context>
     <context name="Root">
@@ -1569,6 +2210,10 @@ pkill -TERM -x tint2 >/dev/null 2>&1 || true
 pkill -TERM -x xterm >/dev/null 2>&1 || true
 sleep 1
 pkill -TERM -f 'Xorg .*:0' >/dev/null 2>&1 || true
+if [ -s /tmp/ylva-desktop-input.pid ]; then
+    kill "$(cat /tmp/ylva-desktop-input.pid)" >/dev/null 2>&1 || true
+fi
+rm -f /tmp/ylva-desktop-input /tmp/ylva-desktop-input.pid
 exit 0
 EOF
 chmod 0755 /mnt/usr/sbin/ylva-stop-desktop
@@ -1633,7 +2278,7 @@ usage() {
     echo "usage: YlvaOS status | YlvaOS update | YlvaOS settings | YlvaOS files [path]"
     echo "       YlvaOS set memory <MiB> | YlvaOS set disk <MiB>"
     echo "       YlvaOS set desktop <WxH>|<width> <height> | YlvaOS set fps <FPS>"
-    echo "       YlvaOS setup wine|font|audio"
+    echo "       YlvaOS setup wine [directmusic] | YlvaOS setup font|audio"
 }
 
 is_positive_int() {
@@ -1731,7 +2376,11 @@ case "${1:-}" in
                 /usr/lib/ylvaos/setup-font
                 ;;
             wine)
-                /usr/lib/ylvaos/setup-wine
+                if [ -n "${3:-}" ]; then
+                    /usr/lib/ylvaos/setup-wine "$3"
+                else
+                    /usr/lib/ylvaos/setup-wine
+                fi
                 ;;
             *)
                 usage
@@ -1784,6 +2433,7 @@ etc/fonts/local.conf
 etc/hostname
 etc/issue
 etc/local.d/ylva-audio.start
+etc/local.d/ylva-input.start
 etc/modules
 etc/motd
 etc/os-release
@@ -1809,10 +2459,22 @@ usr/bin/terminal
 usr/bin/YlvaOS
 usr/bin/ylva-audio-bridge
 usr/bin/ylva-control
+usr/bin/ylva-desktop-input-agent
 usr/bin/ylva-host-agent
+usr/bin/ylva-midi-bridge
 usr/bin/ylva-splash
 usr/bin/ylva-start-audio
+usr/local/bin/regedit
+usr/local/bin/regsvr32
+usr/local/bin/wine
+usr/local/bin/wineboot
+usr/local/bin/winecfg
+usr/local/bin/wineconsole
+usr/local/bin/winefile
+usr/local/bin/wineserver
 usr/lib/ylvaos/managed-files
+usr/lib/ylvaos/configure-wine-midi
+usr/lib/ylvaos/registry-helpers
 usr/lib/ylvaos/settings-tui
 usr/lib/ylvaos/setup-audio
 usr/lib/ylvaos/setup-font
@@ -1825,7 +2487,7 @@ usr/sbin/ylva-stop-desktop
 EOF
 
 cp /mnt/usr/lib/ylvaos/managed-files /tmp/ylvaos-managed-files
-find /mnt/lib/modules -type f \( -path '*/kernel/sound/*' -o -name 'modules.alias*' -o -name 'modules.builtin*' -o -name 'modules.dep*' -o -name 'modules.devname' -o -name 'modules.order' -o -name 'modules.softdep' -o -name 'modules.symbols*' -o -name 'modules.weakdep' \) 2>/dev/null |
+find /mnt/lib/modules -type f \( -path '*/kernel/sound/*' -o -name 'uinput.ko*' -o -name 'modules.alias*' -o -name 'modules.builtin*' -o -name 'modules.dep*' -o -name 'modules.devname' -o -name 'modules.order' -o -name 'modules.softdep' -o -name 'modules.symbols*' -o -name 'modules.weakdep' \) 2>/dev/null |
     sed 's#^/mnt/##' >>/tmp/ylvaos-managed-files
 find /mnt/boot -maxdepth 1 -type f \( -name 'vmlinuz-*' -o -name 'initramfs-*' -o -name 'config-*' -o -name 'System.map-*' \) 2>/dev/null |
     sed 's#^/mnt/##' >>/tmp/ylvaos-managed-files
@@ -1946,6 +2608,10 @@ def prepare_update_export(build_dir: Path) -> Path:
         shutil.rmtree(export_dir)
     export_dir.mkdir(parents=True)
     (export_dir / "YLVA_UPDATE_EXPORT_DRIVE").write_text("YlvaOS update export drive\n", encoding="utf-8")
+    # QEMU fixes vvfat capacity from the directory's initial contents. A sparse
+    # reserve keeps large rootfs, kernel, and initrd exports from being truncated.
+    with (export_dir / "YLVA_UPDATE_EXPORT_RESERVE.bin").open("wb") as reserve:
+        reserve.truncate(256 * 1024 * 1024)
     return export_dir
 
 

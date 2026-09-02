@@ -78,6 +78,10 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--disk", type=Path, default=repo_root() / "_work" / "ylvaos-image" / "disk.qcow2")
     parser.add_argument("--copy-disk", action="store_true", help="boot a temporary copy so the source disk stays pristine")
+    parser.add_argument(
+        "--simulate-update-notice-version",
+        help="expose a minimal newer MOD payload and verify the startup update notice",
+    )
     args = parser.parse_args()
 
     root = repo_root()
@@ -92,6 +96,17 @@ def main() -> int:
     kernel = root / "Mod_YlvaOS" / "vm" / "assets" / "vmlinuz"
     initrd = root / "Mod_YlvaOS" / "vm" / "assets" / "initrd.img"
     update_dir = root / "Mod_YlvaOS" / "vm" / "update"
+    if args.simulate_update_notice_version:
+        update_dir = root / "_work" / "ylvaos-update-notice-test"
+        if update_dir.exists():
+            shutil.rmtree(update_dir)
+        update_dir.mkdir(parents=True)
+        (update_dir / "YLVAOS_UPDATE_SOURCE").write_bytes(b"YlvaOS update source\n")
+        (update_dir / "ylvaos-release").write_bytes(
+            f'YLVAOS_VERSION="{args.simulate_update_notice_version}"\nALPINE_VERSION="3.24.1"\n'.encode("ascii")
+        )
+        (update_dir / "rootfs-overlay.tar.gz").write_bytes(b"test payload")
+        (update_dir / "update.sh").write_bytes(b"#!/bin/sh\nexit 0\n")
     test_user = "aoi_nasuko"
     test_password = "ylva"
     password_b64 = base64.b64encode(test_password.encode("utf-8")).decode("ascii")
@@ -145,15 +160,26 @@ def main() -> int:
             return 1
         with console.lock:
             snapshot = console.text
-        if "^           Ylva OS" not in snapshot or "(  * *)   by aoi_nasuko" not in snapshot or "Alpine Linux 3.24.1 base / YlvaOS 0.02" not in snapshot:
+        if "^           Ylva OS" not in snapshot or "(  * *)   by aoi_nasuko" not in snapshot or "Alpine Linux 3.24.1 base / YlvaOS 0.04" not in snapshot:
             raise RuntimeError("YlvaOS login splash was not printed")
+        if args.simulate_update_notice_version:
+            expected = f"Bundled:   Alpine Linux 3.24.1 base / YlvaOS {args.simulate_update_notice_version}"
+            if (
+                "A YlvaOS update is available from the installed MOD." not in snapshot
+                or expected not in snapshot
+                or 'Run "YlvaOS update" to install it. YlvaOS will restart automatically.' not in snapshot
+            ):
+                raise RuntimeError("YlvaOS startup update notice was not printed")
+        elif "A YlvaOS update is available from the installed MOD." in snapshot:
+            raise RuntimeError("YlvaOS startup update notice was printed for the current version")
         time.sleep(1)
         console.send('echo __YLVA_USER__$(whoami)__END__')
         console.wait_for_any([f"__YLVA_USER__{test_user}__END__"], 30)
         console.send("YlvaOS set memory 3072")
         console.wait_for_any(["YlvaOS memory target set to 3072 MiB"], 30)
-        console.send("YlvaOS update")
-        console.wait_for_any(["YlvaOS is already up to date."], 30)
+        if not args.simulate_update_notice_version:
+            console.send("YlvaOS update")
+            console.wait_for_any(["YlvaOS is already up to date."], 30)
         console.send("vim --version | head -n 1")
         console.wait_for_any(["VIM - Vi IMproved"], 30)
         try:

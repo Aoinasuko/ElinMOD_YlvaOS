@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>YlvaOS Help</title>
-  <meta name="description" content="YlvaOS MOD commands and usage guide for Elin.">
+  <title>YlvaOS ユーザーガイド</title>
+  <meta name="description" content="Elin MOD YlvaOS の概要、使用リソース、保存場所、独自コマンド、カーネルモードとデスクトップモードの操作ガイド。">
   <style>
     :root {
       color-scheme: dark;
@@ -58,21 +58,42 @@
 
     .top {
       display: grid;
-      grid-template-columns: 1.1fr 0.9fr;
+      grid-template-columns: 1.05fr 0.95fr;
       gap: 28px;
       align-items: end;
       padding: 48px 0 28px;
     }
 
-    h1, h2, h3 {
+    .language {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 18px;
+    }
+
+    .language a {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      color: var(--text);
+      padding: 6px 10px;
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    .language a[aria-current="page"] {
+      border-color: rgba(112, 242, 164, 0.7);
+      color: var(--green);
+    }
+
+    h1,
+    h2,
+    h3 {
       line-height: 1.2;
       margin: 0;
       letter-spacing: 0;
     }
 
     h1 {
-      font-size: clamp(2rem, 7vw, 4.8rem);
       color: var(--green);
+      font-size: 4rem;
     }
 
     h2 {
@@ -81,13 +102,13 @@
     }
 
     h3 {
-      font-size: 1rem;
       color: var(--amber);
+      font-size: 1rem;
       margin-bottom: 8px;
     }
 
     .lead {
-      max-width: 64ch;
+      max-width: 66ch;
       color: var(--muted);
       font-size: 1.05rem;
       margin: 16px 0 0;
@@ -137,32 +158,41 @@
       margin-bottom: 6px;
     }
 
+    .data-table,
     .command-list {
       display: grid;
-      grid-template-columns: minmax(220px, 0.35fr) 1fr;
+      grid-template-columns: minmax(220px, 0.34fr) 1fr;
       border: 1px solid var(--line);
       border-radius: 8px;
       overflow: hidden;
       background: var(--panel);
     }
 
+    .data-table div,
     .command-list div {
       padding: 12px 14px;
       border-bottom: 1px solid rgba(42, 75, 66, 0.65);
     }
 
+    .data-table div:nth-child(odd),
     .command-list div:nth-child(odd) {
       background: var(--panel-2);
-      font-family: Consolas, "Cascadia Mono", monospace;
       color: var(--green);
+      font-weight: 600;
+    }
+
+    .command-list div:nth-child(odd) {
+      font-family: Consolas, "Cascadia Mono", monospace;
       overflow-wrap: anywhere;
     }
 
+    .data-table div:nth-last-child(-n + 2),
     .command-list div:nth-last-child(-n + 2) {
       border-bottom: 0;
     }
 
-    code, pre {
+    code,
+    pre {
       font-family: Consolas, "Cascadia Mono", monospace;
     }
 
@@ -213,14 +243,23 @@
     }
 
     @media (max-width: 780px) {
-      .top, .grid, .command-list {
+      .top,
+      .grid,
+      .data-table,
+      .command-list {
         grid-template-columns: 1fr;
       }
 
+      h1 {
+        font-size: 3rem;
+      }
+
+      .data-table div:nth-last-child(-n + 2),
       .command-list div:nth-last-child(-n + 2) {
         border-bottom: 1px solid rgba(42, 75, 66, 0.65);
       }
 
+      .data-table div:last-child,
       .command-list div:last-child {
         border-bottom: 0;
       }
@@ -231,175 +270,161 @@
   <header>
     <div class="wrap top">
       <div>
+        <div class="language" aria-label="Language">
+          <a href="index.html" aria-current="page">日本語</a>
+          <a href="index.en.html">English</a>
+        </div>
         <h1>YlvaOS</h1>
-        <p class="lead">Elin内のコンピューター家具から起動する、実Linux VMベースの小さなOSです。テキストコンソール、軽量デスクトップ、Wine、任意ネットワーク接続を備えています。</p>
+        <p class="lead">Elin内のコンピューター家具から起動する、実Linux VMベースの小さなOSです。YlvaOS 0.04はAlpine Linux 3.24.1をベースに、カーネルモードと軽量デスクトップモードを提供します。</p>
       </div>
       <pre aria-label="YlvaOS splash">-----------------------------
  ^           Ylva OS
 (  * *)   by aoi_nasuko
 -----------------------------
-Alpine Linux 3.24.1 base / YlvaOS 0.02</pre>
+Alpine Linux 3.24.1 base / YlvaOS 0.04</pre>
     </div>
     <nav class="wrap" aria-label="ページ内ナビゲーション">
-      <a href="#start">はじめる</a>
-      <a href="#commands">コマンド</a>
-      <a href="#desktop">Desktop</a>
-      <a href="#roadmap">Roadmap</a>
-      <a href="#elona">Elona</a>
-      <a href="#network">Network</a>
-      <a href="#paths">保存場所</a>
-      <a href="#distribution">配布</a>
+      <a href="#overview">概要</a>
+      <a href="#resources">PCリソース</a>
+      <a href="#storage">保存場所</a>
+      <a href="#commands">独自コマンド</a>
+      <a href="#kernel">カーネルモード</a>
+      <a href="#desktop">デスクトップモード</a>
     </nav>
   </header>
 
   <main class="wrap">
-    <section id="start">
-      <h2>はじめる</h2>
+    <section id="overview">
+      <h2>YlvaOSの概要</h2>
+      <p>YlvaOSは、Elinのゲーム内ウィンドウに表示されるLinux互換OS環境です。MODはQEMUで隔離された仮想マシンを起動し、その画面をElin内のコンピューターウィンドウへ描画します。</p>
       <div class="grid">
         <div class="card">
-          <strong>1. コンピューターを使う</strong>
-          手持ちでも地面に設置した状態でも、Elinのコンピューター家具を使用するとYlvaOSウィンドウが開きます。
+          <strong>実Linux VM</strong>
+          Linux kernelとAlpine Linuxベースのユーザーランドを、QEMUの仮想マシン内で起動します。
         </div>
         <div class="card">
-          <strong>2. 初回警告に同意</strong>
-          初回のみ、実Linux互換OSをPC上で動かすことへの警告が表示されます。同意後にセットアップへ進みます。
+          <strong>ゲーム内表示</strong>
+          カーネルモードのテキスト画面と、軽量デスクトップモードをElin内のウィンドウへ表示します。
         </div>
         <div class="card">
-          <strong>3. ユーザー作成</strong>
-          ユーザー名とパスワードを入力します。パスワードは空でも構いません。次回以降はログイン画面から始まります。
+          <strong>安全寄りの初期状態</strong>
+          ネットワークは既定で無効です。ホストからゲストへ渡すImportフォルダは読み取り専用です。
         </div>
       </div>
-      <p class="note">YlvaOSのデータはコンピューターごとではなく全セーブ共通です。LocalLow配下のYlvaOSフォルダに保存されます。</p>
+      <p class="note">このMODは実際にPC上でLinux互換OSを動かします。Linuxや派生OSの操作を理解している方向けです。</p>
     </section>
 
-    <section id="commands">
-      <h2>独自コマンド一覧</h2>
-      <div class="command-list">
-        <div>Desktop</div>
-        <div>軽量デスクトップへ切り替えます。Openbox、tint2、xtermを使うGUIモードです。</div>
-        <div>Kernel</div>
-        <div>デスクトップからテキストコンソールへ戻ります。デスクトップ端末内で実行できます。</div>
-        <div>Terminal [title]</div>
-        <div>デスクトップ上にYlvaOS Terminalを開きます。右クリックメニューや <code>Ctrl+Alt+T</code> でも起動できます。</div>
-        <div>Settings</div>
-        <div>YlvaOS Settingsを開きます。メモリ、ディスク、解像度、FPS、音声、ネットワークを操作できます。</div>
-        <div>Files [path]</div>
-        <div>File Managerを開きます。home、Import、Documents、Downloadsなどを指定できます。</div>
-        <div>YlvaOS status</div>
-        <div>YlvaOSの状態とLinux kernel情報を表示します。</div>
-        <div>YlvaOS update</div>
-        <div>MOD同梱の更新ドライブを確認し、YlvaOSのバージョンが上がっていればOS管理ファイルを更新して再起動します。</div>
-        <div>YlvaOS set memory &lt;MiB&gt;</div>
-        <div>VMのメモリ割り当てを変更します。反映はYlvaOS再起動後です。例: <code>YlvaOS set memory 4096</code></div>
-        <div>YlvaOS set disk &lt;MiB&gt;</div>
-        <div>仮想ディスクの目標サイズを拡張します。縮小はできません。反映は次回VM起動時です。</div>
-        <div>YlvaOS set desktop &lt;WxH&gt;</div>
-        <div>デスクトップ解像度を変更します。反映はYlvaOS再起動後です。例: <code>YlvaOS set desktop 1280x720</code></div>
-        <div>YlvaOS set fps &lt;FPS&gt;</div>
-        <div>デスクトップ描画更新の目標FPSを変更します。反映はYlvaOS再起動後です。</div>
-        <div>ConnectNetwork</div>
-        <div>英語のリスク警告を表示し、<code>yes</code> と入力した場合だけ、そのVMセッションでインターネット接続を有効化します。</div>
-        <div>YlvaOS setup wine</div>
-        <div>Wine prefix、音声経路、日本語表示用のCP932/フォント設定を初期化します。Elonaを初めて動かす前に実行します。</div>
-        <div>YlvaOS setup font</div>
-        <div>fontconfig cacheとWineの日本語フォント置換を再適用します。</div>
-        <div>YlvaOS setup audio</div>
-        <div>PulseAudioの <code>ylva</code> sink とMIDI再生用FluidSynthを起動します。</div>
+    <section id="resources">
+      <h2>使用するPCリソース</h2>
+      <div class="data-table">
+        <div>対応OS</div>
+        <div>同梱ファイルと実行方式の都合上、Windowsのみを対象にしています。</div>
+        <div>メモリ</div>
+        <div>既定は4096 MiBです。<code>YlvaOS set memory &lt;MiB&gt;</code> またはYlvaOS Settingsで変更でき、再起動後に反映されます。</div>
+        <div>仮想ディスク</div>
+        <div>既定は16384 MiBです。<code>YlvaOS set disk &lt;MiB&gt;</code> で拡張できます。縮小はできません。</div>
+        <div>CPU</div>
+        <div>既定で2 vCPUを使用します。実際の負荷はゲスト内で実行するアプリケーションに依存します。</div>
+        <div>画面描画</div>
+        <div>デスクトップ解像度は既定1024x768、描画更新は既定24 FPSです。<code>YlvaOS set desktop &lt;WxH&gt;</code> と <code>YlvaOS set fps &lt;FPS&gt;</code> で変更できます。</div>
+        <div>ネットワーク</div>
+        <div>既定では無効です。<code>ConnectNetwork</code> 実行後、英文警告に対して <code>yes</code> と入力した場合のみ、そのVMセッションで有効になります。</div>
       </div>
-      <p>小文字エイリアスとして <code>desktop</code>、<code>kernel</code>、<code>terminal</code>、<code>connectnetwork</code> も用意されています。</p>
     </section>
 
-    <section id="desktop">
-      <h2>Desktop Mode</h2>
-      <p>テキストコンソールで <code>Desktop</code> を実行すると、YlvaOSウィンドウ内に軽量デスクトップが表示されます。入力はElinウィンドウ内からQEMUのVNC/RFB経由でゲストへ送られます。</p>
-      <ul>
-        <li><code>Ctrl+Alt+T</code>: YlvaOS Terminalを開く</li>
-        <li><code>Ctrl+Alt+K</code>: テキストコンソールへ戻る</li>
-        <li><code>Ctrl+V</code>: ホストのクリップボード文字列をYlvaOSへ貼り付ける</li>
-        <li>ウィンドウの最小化、最大化、閉じる: Openboxのタイトルバー上のボタンを使用</li>
-        <li><code>X</code>ボタン: YlvaOSウィンドウを閉じる</li>
-      </ul>
-    </section>
-
-    <section id="roadmap">
-      <h2>一般OS機能の候補</h2>
-      <p>今後はElonaやElin専用機能ではなく、軽量デスクトップOSとして便利な機能を優先して追加する方針です。</p>
-      <div class="grid">
-        <div class="card">
-          <strong>設定と復旧</strong>
-          YlvaOS Settingsは初期実装済みです。次はSnapshot / Restore、Repair Modeを優先候補にします。
-        </div>
-        <div class="card">
-          <strong>日常操作</strong>
-          File Managerは初期実装済みです。次はApplication Launcher、Text Editor、Archive Managerを追加候補にします。
-        </div>
-        <div class="card">
-          <strong>状態確認</strong>
-          System Monitor、Audio Mixer、Display Settings、Notification Areaを検討します。
-        </div>
-      </div>
-      <p>詳細は <a href="YlvaOS_General_Desktop_Feature_Ideas.md">YlvaOS General Desktop Feature Ideas</a> を参照してください。</p>
-    </section>
-
-    <section id="elona">
-      <h2>Elonaを入れて起動する</h2>
-      <p>Elona本体は配布条件を確認し、ユーザー自身で用意してください。ホスト側のImportフォルダへElonaフォルダを置くと、YlvaOSから読み取り専用ドライブとして見えます。</p>
-      <pre>C:\Users\&lt;ユーザー名&gt;\AppData\LocalLow\Lafrontier\Elin\YlvaOS\Import\elona</pre>
-      <p>YlvaOS内でコピーする例:</p>
-      <pre>mkdir -p ~/Import
-for dev in /dev/vdb1 /dev/vdb /dev/vdc1 /dev/vdc /dev/vdd1 /dev/vdd /dev/sda1 /dev/sda /dev/sdb1 /dev/sdb; do
-  [ -b "$dev" ] || continue
-  doas mount -t vfat -o ro,uid=$(id -u),gid=$(id -g),utf8=1 "$dev" ~/Import || continue
-  [ -d ~/Import/elona ] && break
-  doas umount ~/Import
-done
-cp -r ~/Import/elona ~/Elona
-doas umount ~/Import</pre>
-      <p>デスクトップへ入り、Wineを初期化してからElonaのフォルダで起動します。</p>
-      <pre>Desktop
-YlvaOS setup wine
-cd ~/Elona
-wine elona.exe</pre>
-    </section>
-
-    <section id="network">
-      <h2>Network</h2>
-      <p>YlvaOSは既定でネットワーク無効です。パッケージ追加などで必要なときだけ <code>ConnectNetwork</code> を実行します。</p>
-      <p class="note danger">ネットワークを有効にすると、ゲスト内プログラムが外部サーバーへ接続し、VM内データを変更または送信できるようになります。警告文を読み、理解した場合だけ <code>yes</code> と入力してください。</p>
-      <pre>ConnectNetwork
-doas apk update
-doas apk add &lt;package&gt;</pre>
-    </section>
-
-    <section id="paths">
-      <h2>保存場所</h2>
-      <p>YlvaOSの実行データはElinのLocalLow配下に作られます。別セーブデータでも同じYlvaOSデータを使います。</p>
+    <section id="storage">
+      <h2>どこにデータが保存されるか、削除方法</h2>
+      <p>YlvaOSのデータはコンピューター家具ごとではなく、すべてのコンピューターとセーブデータで共通です。保存場所はElinのLocalLow配下です。</p>
       <pre>C:\Users\&lt;ユーザー名&gt;\AppData\LocalLow\Lafrontier\Elin\YlvaOS
 ├─ state.json
 ├─ vmconfig.json
 ├─ vm\disk.qcow2
 ├─ vm\assets\vmlinuz
 ├─ vm\assets\initrd.img
-├─ vm\update\  (MOD同梱側のみ)
 ├─ Tools\qemu\
 └─ Import\</pre>
-      <p>YlvaOSからホスト全体へアクセスする経路は用意していません。Importフォルダだけを読み取り専用で渡します。</p>
-      <p class="note">MOD更新後はYlvaOS内で <code>YlvaOS update</code> を実行してください。既存の <code>vm\disk.qcow2</code> は自動上書きせず、同梱update payloadからYlvaOS管理ファイルだけを更新します。</p>
+      <ul>
+        <li><code>vm\disk.qcow2</code> にはLinux側のユーザー、ホームディレクトリ、インストール済みパッケージなどが保存されます。</li>
+        <li><code>vmconfig.json</code> にはメモリ、ディスク、デスクトップ解像度、FPSなどの設定が保存されます。</li>
+        <li><code>Import</code> はホストからYlvaOSへファイルを渡すための読み取り専用フォルダです。</li>
+      </ul>
+      <p class="note danger">データを削除または初期化したい場合は、ElinとYlvaOSを終了してから <code>YlvaOS</code> フォルダ全体を削除してください。Linux側のユーザー、パスワード、ホームディレクトリ、インストール済みパッケージも削除されます。</p>
     </section>
 
-    <section id="distribution">
-      <h2>GitHub公開と配布</h2>
-      <p>公開リポジトリでは、QEMU、kernel/initrd、生成済みroot disk、ローカルElonaコピーは追跡しません。配布時はRelease用zipに必要なランタイムを含めるか、ユーザー向けにビルド手順を案内してください。</p>
+    <section id="commands">
+      <h2>独自コマンド一覧</h2>
+      <div class="command-list">
+        <div>Desktop</div>
+        <div>軽量デスクトップモードへ切り替えます。</div>
+        <div>Kernel</div>
+        <div>デスクトップモードからカーネルモードへ戻ります。</div>
+        <div>Terminal [title]</div>
+        <div>デスクトップ上にYlvaOS Terminalを開きます。<code>Ctrl+Alt+T</code> でも起動できます。</div>
+        <div>Settings</div>
+        <div>YlvaOS Settingsを開きます。</div>
+        <div>Files [path]</div>
+        <div>File Managerを開きます。パスを省略した場合はホーム周辺を開きます。</div>
+        <div>YlvaOS status</div>
+        <div>YlvaOSとLinux kernelの状態を表示します。</div>
+        <div>YlvaOS update</div>
+        <div>MODディレクトリ内の更新データを確認し、YlvaOSのバージョンが上がっていれば更新して再起動します。新しい同梱版がある場合は起動時にも通知されます。</div>
+        <div>YlvaOS settings</div>
+        <div>YlvaOS Settingsを開きます。</div>
+        <div>YlvaOS files [path]</div>
+        <div>File Managerを開きます。</div>
+        <div>YlvaOS set memory &lt;MiB&gt;</div>
+        <div>VMのメモリ割り当てを変更します。反映はYlvaOS再起動後です。</div>
+        <div>YlvaOS set disk &lt;MiB&gt;</div>
+        <div>仮想ディスクの目標サイズを拡張します。縮小はできません。</div>
+        <div>YlvaOS set desktop &lt;WxH&gt;</div>
+        <div>デスクトップ解像度を変更します。例: <code>YlvaOS set desktop 1280x720</code></div>
+        <div>YlvaOS set fps &lt;FPS&gt;</div>
+        <div>デスクトップ描画更新の目標FPSを変更します。</div>
+        <div>YlvaOS setup wine</div>
+        <div>Wine環境を初期化します。</div>
+        <div>YlvaOS setup wine directmusic</div>
+        <div>古いWindowsゲームのMIDI再生向けに、同意後にwinetricks経由でDirectMusic関連ランタイムを導入します。事前に <code>ConnectNetwork</code> が必要です。</div>
+        <div>YlvaOS setup font</div>
+        <div>日本語表示向けのフォント設定を再適用します。</div>
+        <div>YlvaOS setup audio</div>
+        <div>デスクトップ音声とMIDI再生向けの音声設定を初期化します。</div>
+        <div>ConnectNetwork</div>
+        <div>リスク警告に同意した場合のみ、そのVMセッションでインターネット接続を有効にします。</div>
+        <div>vm status / vm paths / vm start / vm stop</div>
+        <div>VM起動前の管理コンソールで使う補助コマンドです。</div>
+      </div>
+      <p>一部コマンドには小文字エイリアスがあります。例: <code>desktop</code>、<code>kernel</code>、<code>terminal</code>、<code>settings</code>、<code>files</code>、<code>connectnetwork</code></p>
+    </section>
+
+    <section id="kernel">
+      <h2>カーネルモードの操作</h2>
+      <p>カーネルモードは、YlvaOS起動直後に表示されるテキストコンソールです。Linuxの通常コマンド、YlvaOS独自コマンド、apkなどのパッケージ管理コマンドを入力できます。</p>
       <ul>
-        <li>rootfs再生成: <code>python .\Tools\build_ylvaos_image.py --force</code></li>
-        <li>MODビルド: <code>dotnet build .\YlvaOS\YlvaOS.csproj -c Release -v:minimal</code></li>
-        <li>第三者ライセンス: <code>Mod_YlvaOS/LEGAL</code> と <code>Mod_YlvaOS/LICENSES</code></li>
+        <li>文字入力: Elin内のYlvaOSウィンドウを選択してキーボード入力します。</li>
+        <li><code>Ctrl+V</code>: ホスト側クリップボードの文字列を貼り付けます。</li>
+        <li><code>Esc</code>: Elin側で閉じる操作には使わず、YlvaOS側へ送信されます。</li>
+        <li><code>Desktop</code>: 軽量デスクトップモードへ切り替えます。</li>
+        <li><code>reboot</code>: YlvaOSを再起動します。メモリや画面設定の変更後に使用します。</li>
+        <li><code>poweroff</code>、<code>shutdown</code>、<code>exit</code>: YlvaOSを終了します。終了後、Elin内のYlvaOSウィンドウは閉じます。</li>
+      </ul>
+    </section>
+
+    <section id="desktop">
+      <h2>デスクトップモードの操作</h2>
+      <p>デスクトップモードは、YlvaOS内で動く軽量GUI環境です。Openboxベースのウィンドウ、YlvaOS Terminal、YlvaOS Settings、File Managerを使用できます。</p>
+      <ul>
+        <li><code>Ctrl+Alt+T</code>: YlvaOS Terminalを開きます。</li>
+        <li><code>Ctrl+Alt+K</code>: カーネルモードへ戻ります。端末内で <code>Kernel</code> と入力しても戻れます。</li>
+        <li><code>Ctrl+V</code>: ホスト側クリップボードの文字列を貼り付けます。</li>
+        <li>右クリック: デスクトップメニューを開き、Terminal、Settings、File Managerなどを起動できます。</li>
+        <li>タイトルバーのボタン: 各ウィンドウを最小化、最大化、閉じることができます。</li>
+        <li>YlvaOSウィンドウ右上のX: Elin内の表示ウィンドウを閉じます。VMが動作中の場合、次回使用時に閉じた時点の画面へ戻ります。</li>
       </ul>
     </section>
   </main>
 
   <footer class="wrap">
-    YlvaOS 0.02 / Elin MOD by aoi_nasuko
+    YlvaOS 0.04 / Elin MOD by aoi_nasuko
   </footer>
 </body>
 </html>

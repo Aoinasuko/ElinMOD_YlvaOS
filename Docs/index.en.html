@@ -1,0 +1,430 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>YlvaOS User Guide</title>
+  <meta name="description" content="Overview, resource usage, storage location, custom commands, kernel mode controls, and desktop mode controls for the Elin MOD YlvaOS.">
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #07100f;
+      --panel: #0e1c1a;
+      --panel-2: #132622;
+      --text: #e9fff3;
+      --muted: #a7c5b5;
+      --line: #2a4b42;
+      --green: #70f2a4;
+      --blue: #8fc7ff;
+      --amber: #ffc978;
+      --red: #ff9b9b;
+      --shadow: rgba(0, 0, 0, 0.35);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+      line-height: 1.65;
+    }
+
+    a {
+      color: var(--blue);
+      text-decoration: none;
+    }
+
+    a:hover {
+      text-decoration: underline;
+    }
+
+    header {
+      border-bottom: 1px solid var(--line);
+      background: #0a1715;
+    }
+
+    .wrap {
+      width: min(1120px, calc(100% - 32px));
+      margin: 0 auto;
+    }
+
+    .top {
+      display: grid;
+      grid-template-columns: 1.05fr 0.95fr;
+      gap: 28px;
+      align-items: end;
+      padding: 48px 0 28px;
+    }
+
+    .language {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 18px;
+    }
+
+    .language a {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      color: var(--text);
+      padding: 6px 10px;
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    .language a[aria-current="page"] {
+      border-color: rgba(112, 242, 164, 0.7);
+      color: var(--green);
+    }
+
+    h1,
+    h2,
+    h3 {
+      line-height: 1.2;
+      margin: 0;
+      letter-spacing: 0;
+    }
+
+    h1 {
+      color: var(--green);
+      font-size: 4rem;
+    }
+
+    h2 {
+      font-size: 1.55rem;
+      margin-bottom: 14px;
+    }
+
+    h3 {
+      color: var(--amber);
+      font-size: 1rem;
+      margin-bottom: 8px;
+    }
+
+    .lead {
+      max-width: 66ch;
+      color: var(--muted);
+      font-size: 1.05rem;
+      margin: 16px 0 0;
+    }
+
+    nav {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      padding: 16px 0 22px;
+    }
+
+    nav a {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      color: var(--text);
+      padding: 8px 11px;
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    main {
+      padding: 28px 0 56px;
+    }
+
+    section {
+      padding: 24px 0;
+      border-bottom: 1px solid rgba(42, 75, 66, 0.65);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px;
+      box-shadow: 0 12px 34px var(--shadow);
+    }
+
+    .card strong {
+      display: block;
+      color: var(--green);
+      margin-bottom: 6px;
+    }
+
+    .data-table,
+    .command-list {
+      display: grid;
+      grid-template-columns: minmax(220px, 0.34fr) 1fr;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      background: var(--panel);
+    }
+
+    .data-table div,
+    .command-list div {
+      padding: 12px 14px;
+      border-bottom: 1px solid rgba(42, 75, 66, 0.65);
+    }
+
+    .data-table div:nth-child(odd),
+    .command-list div:nth-child(odd) {
+      background: var(--panel-2);
+      color: var(--green);
+      font-weight: 600;
+    }
+
+    .command-list div:nth-child(odd) {
+      font-family: Consolas, "Cascadia Mono", monospace;
+      overflow-wrap: anywhere;
+    }
+
+    .data-table div:nth-last-child(-n + 2),
+    .command-list div:nth-last-child(-n + 2) {
+      border-bottom: 0;
+    }
+
+    code,
+    pre {
+      font-family: Consolas, "Cascadia Mono", monospace;
+    }
+
+    code {
+      color: var(--green);
+      background: rgba(112, 242, 164, 0.08);
+      border: 1px solid rgba(112, 242, 164, 0.22);
+      border-radius: 5px;
+      padding: 1px 5px;
+    }
+
+    pre {
+      margin: 12px 0 0;
+      padding: 14px;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      background: #050b0a;
+      color: var(--text);
+      overflow: auto;
+    }
+
+    pre[aria-label="YlvaOS splash"] {
+      color: var(--blue);
+    }
+
+    .note {
+      border-left: 3px solid var(--amber);
+      background: rgba(255, 201, 120, 0.08);
+      padding: 12px 14px;
+      border-radius: 6px;
+      color: #ffe5bc;
+    }
+
+    .danger {
+      border-left-color: var(--red);
+      background: rgba(255, 155, 155, 0.08);
+      color: #ffd2d2;
+    }
+
+    ul {
+      padding-left: 20px;
+      margin: 10px 0 0;
+    }
+
+    footer {
+      color: var(--muted);
+      padding: 28px 0 46px;
+    }
+
+    @media (max-width: 780px) {
+      .top,
+      .grid,
+      .data-table,
+      .command-list {
+        grid-template-columns: 1fr;
+      }
+
+      h1 {
+        font-size: 3rem;
+      }
+
+      .data-table div:nth-last-child(-n + 2),
+      .command-list div:nth-last-child(-n + 2) {
+        border-bottom: 1px solid rgba(42, 75, 66, 0.65);
+      }
+
+      .data-table div:last-child,
+      .command-list div:last-child {
+        border-bottom: 0;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap top">
+      <div>
+        <div class="language" aria-label="Language">
+          <a href="index.html">日本語</a>
+          <a href="index.en.html" aria-current="page">English</a>
+        </div>
+        <h1>YlvaOS</h1>
+        <p class="lead">YlvaOS is a small real-Linux VM operating system launched from computer furniture inside Elin. YlvaOS 0.04 is based on Alpine Linux 3.24.1 and provides both kernel console mode and a lightweight desktop mode.</p>
+      </div>
+      <pre aria-label="YlvaOS splash">-----------------------------
+ ^           Ylva OS
+(  * *)   by aoi_nasuko
+-----------------------------
+Alpine Linux 3.24.1 base / YlvaOS 0.04</pre>
+    </div>
+    <nav class="wrap" aria-label="Page navigation">
+      <a href="#overview">Overview</a>
+      <a href="#resources">PC Resources</a>
+      <a href="#storage">Storage</a>
+      <a href="#commands">Commands</a>
+      <a href="#kernel">Kernel Mode</a>
+      <a href="#desktop">Desktop Mode</a>
+    </nav>
+  </header>
+
+  <main class="wrap">
+    <section id="overview">
+      <h2>YlvaOS Overview</h2>
+      <p>YlvaOS is a Linux-compatible OS environment shown inside an Elin in-game window. The MOD starts an isolated QEMU virtual machine, then draws the guest display into the computer window inside Elin.</p>
+      <div class="grid">
+        <div class="card">
+          <strong>Real Linux VM</strong>
+          YlvaOS boots a Linux kernel and an Alpine Linux based userland inside a QEMU virtual machine.
+        </div>
+        <div class="card">
+          <strong>In-Game Display</strong>
+          Both the kernel text console and the lightweight desktop are displayed inside the Elin UI.
+        </div>
+        <div class="card">
+          <strong>Safer Default State</strong>
+          Networking is disabled by default. The host-to-guest Import folder is exposed as read-only.
+        </div>
+      </div>
+      <p class="note">This MOD runs a real Linux-compatible operating system on your PC. It is intended for users who understand Linux or Linux-derived systems.</p>
+    </section>
+
+    <section id="resources">
+      <h2>PC Resources Used</h2>
+      <div class="data-table">
+        <div>Supported OS</div>
+        <div>Windows only, due to the bundled files and the current runtime method.</div>
+        <div>Memory</div>
+        <div>The default allocation is 4096 MiB. Change it with <code>YlvaOS set memory &lt;MiB&gt;</code> or YlvaOS Settings. The change applies after rebooting YlvaOS.</div>
+        <div>Virtual Disk</div>
+        <div>The default virtual disk size is 16384 MiB. Expand it with <code>YlvaOS set disk &lt;MiB&gt;</code>. Shrinking is not supported.</div>
+        <div>CPU</div>
+        <div>The VM uses 2 vCPUs by default. Actual host load depends on the applications running inside the guest.</div>
+        <div>Display</div>
+        <div>The desktop defaults to 1024x768 at 24 FPS. Use <code>YlvaOS set desktop &lt;WxH&gt;</code> and <code>YlvaOS set fps &lt;FPS&gt;</code> to change these values.</div>
+        <div>Network</div>
+        <div>Networking is disabled by default. Run <code>ConnectNetwork</code>, read the English warning, and type <code>yes</code> to enable it for the current VM session.</div>
+      </div>
+    </section>
+
+    <section id="storage">
+      <h2>Where Data Is Stored and How to Delete It</h2>
+      <p>YlvaOS data is shared by all computer furniture and all Elin save files. It is stored under Elin's LocalLow directory.</p>
+      <pre>C:\Users\&lt;UserName&gt;\AppData\LocalLow\Lafrontier\Elin\YlvaOS
+├─ state.json
+├─ vmconfig.json
+├─ vm\disk.qcow2
+├─ vm\assets\vmlinuz
+├─ vm\assets\initrd.img
+├─ Tools\qemu\
+└─ Import\</pre>
+      <ul>
+        <li><code>vm\disk.qcow2</code> stores Linux users, home directories, installed packages, and other guest data.</li>
+        <li><code>vmconfig.json</code> stores memory, disk, desktop resolution, FPS, and related settings.</li>
+        <li><code>Import</code> is a read-only host-to-guest folder used to pass files into YlvaOS.</li>
+      </ul>
+      <p class="note danger">To reset or remove YlvaOS data, close Elin and YlvaOS, then delete the entire <code>YlvaOS</code> folder. This removes Linux users, passwords, home directories, and installed packages.</p>
+    </section>
+
+    <section id="commands">
+      <h2>Custom Commands</h2>
+      <div class="command-list">
+        <div>Desktop</div>
+        <div>Switches to lightweight desktop mode.</div>
+        <div>Kernel</div>
+        <div>Returns from desktop mode to kernel console mode.</div>
+        <div>Terminal [title]</div>
+        <div>Opens a YlvaOS Terminal window on the desktop. <code>Ctrl+Alt+T</code> also opens it.</div>
+        <div>Settings</div>
+        <div>Opens YlvaOS Settings.</div>
+        <div>Files [path]</div>
+        <div>Opens File Manager. If no path is provided, it opens near the home directory.</div>
+        <div>YlvaOS status</div>
+        <div>Shows YlvaOS and Linux kernel status.</div>
+        <div>YlvaOS update</div>
+        <div>Checks the installed MOD directory and updates YlvaOS if a newer bundled OS version is available, then reboots. Startup also reports when a newer bundled version is available.</div>
+        <div>YlvaOS settings</div>
+        <div>Opens YlvaOS Settings.</div>
+        <div>YlvaOS files [path]</div>
+        <div>Opens File Manager.</div>
+        <div>YlvaOS set memory &lt;MiB&gt;</div>
+        <div>Changes the VM memory allocation. The change applies after rebooting YlvaOS.</div>
+        <div>YlvaOS set disk &lt;MiB&gt;</div>
+        <div>Expands the target virtual disk size. Shrinking is not supported.</div>
+        <div>YlvaOS set desktop &lt;WxH&gt;</div>
+        <div>Changes the desktop resolution. Example: <code>YlvaOS set desktop 1280x720</code></div>
+        <div>YlvaOS set fps &lt;FPS&gt;</div>
+        <div>Changes the target desktop refresh FPS.</div>
+        <div>YlvaOS setup wine</div>
+        <div>Initializes the Wine environment.</div>
+        <div>YlvaOS setup wine directmusic</div>
+        <div>Installs DirectMusic-related runtime components through winetricks after explicit consent for old Windows game MIDI playback. Run <code>ConnectNetwork</code> first.</div>
+        <div>YlvaOS setup font</div>
+        <div>Reapplies font settings for Japanese text rendering.</div>
+        <div>YlvaOS setup audio</div>
+        <div>Initializes desktop audio and MIDI playback support.</div>
+        <div>ConnectNetwork</div>
+        <div>Enables Internet access for the current VM session only after the user accepts the risk warning.</div>
+        <div>vm status / vm paths / vm start / vm stop</div>
+        <div>Helper commands used in the pre-VM management console.</div>
+      </div>
+      <p>Some commands also have lowercase aliases, such as <code>desktop</code>, <code>kernel</code>, <code>terminal</code>, <code>settings</code>, <code>files</code>, and <code>connectnetwork</code>.</p>
+    </section>
+
+    <section id="kernel">
+      <h2>Kernel Mode Controls</h2>
+      <p>Kernel mode is the text console shown after YlvaOS starts. You can run normal Linux commands, YlvaOS custom commands, and package management commands such as apk.</p>
+      <ul>
+        <li>Typing: focus the YlvaOS window inside Elin, then type normally.</li>
+        <li><code>Ctrl+V</code>: pastes text from the host clipboard into YlvaOS.</li>
+        <li><code>Esc</code>: sent to YlvaOS instead of closing the Elin-side window.</li>
+        <li><code>Desktop</code>: switches to lightweight desktop mode.</li>
+        <li><code>reboot</code>: reboots YlvaOS. Use this after changing memory or display settings.</li>
+        <li><code>poweroff</code>, <code>shutdown</code>, or <code>exit</code>: shuts down YlvaOS. The Elin-side YlvaOS window closes after shutdown.</li>
+      </ul>
+    </section>
+
+    <section id="desktop">
+      <h2>Desktop Mode Controls</h2>
+      <p>Desktop mode is a lightweight GUI environment running inside YlvaOS. It provides Openbox windows, YlvaOS Terminal, YlvaOS Settings, and File Manager.</p>
+      <ul>
+        <li><code>Ctrl+Alt+T</code>: opens YlvaOS Terminal.</li>
+        <li><code>Ctrl+Alt+K</code>: returns to kernel mode. You can also type <code>Kernel</code> in a terminal.</li>
+        <li><code>Ctrl+V</code>: pastes text from the host clipboard.</li>
+        <li>Right click: opens the desktop menu for Terminal, Settings, File Manager, and related actions.</li>
+        <li>Title bar buttons: minimize, maximize, or close desktop windows.</li>
+        <li>YlvaOS window X button: closes the in-game display window. If the VM is still running, the next use resumes the screen from where you left it.</li>
+      </ul>
+    </section>
+  </main>
+
+  <footer class="wrap">
+    YlvaOS 0.04 / Elin MOD by aoi_nasuko
+  </footer>
+</body>
+</html>

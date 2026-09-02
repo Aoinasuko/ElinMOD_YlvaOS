@@ -124,15 +124,15 @@ namespace YlvaOS
             {
                 if (IsVmConsoleActive)
                 {
-                    return "YlvaOS 0.02 - Real Linux console - " + CurrentUserName;
+                    return "YlvaOS 0.04 - Real Linux console - " + CurrentUserName;
                 }
 
                 if (IsDesktopMode)
                 {
-                    return "YlvaOS 0.02 - Lightweight Desktop - " + CurrentUserName;
+                    return "YlvaOS 0.04 - Lightweight Desktop - " + CurrentUserName;
                 }
 
-                return "YlvaOS 0.02 - Login";
+                return "YlvaOS 0.04 - Login";
             }
         }
 

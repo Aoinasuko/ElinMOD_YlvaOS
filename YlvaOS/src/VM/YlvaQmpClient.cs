@@ -111,6 +111,37 @@ namespace YlvaOS
             }
         }
 
+        public bool TrySendPointerButtonState(int x, int y, int width, int height, int previousMask, int buttonMask, out string message)
+        {
+            lock (sync)
+            {
+                if (client == null || !client.Connected || !capabilitiesNegotiated)
+                {
+                    message = "QMP is not connected.";
+                    return false;
+                }
+
+                JArray events = new JArray
+                {
+                    CreateAbsolutePointerEvent("x", ScaleAbsolutePointerCoordinate(x, width)),
+                    CreateAbsolutePointerEvent("y", ScaleAbsolutePointerCoordinate(y, height))
+                };
+
+                AppendPointerButtonTransition(events, previousMask, buttonMask, 1, "left");
+                AppendPointerButtonTransition(events, previousMask, buttonMask, 2, "middle");
+                AppendPointerButtonTransition(events, previousMask, buttonMask, 4, "right");
+                AppendPointerButtonTransition(events, previousMask, buttonMask, 8, "wheel-up");
+                AppendPointerButtonTransition(events, previousMask, buttonMask, 16, "wheel-down");
+
+                JObject response;
+                return ExecuteLocked(
+                    "input-send-event",
+                    new JObject { ["events"] = events },
+                    out response,
+                    out message);
+            }
+        }
+
         public void Dispose()
         {
             lock (sync)
@@ -218,6 +249,46 @@ namespace YlvaOS
             return text.IndexOf("duplicate", StringComparison.OrdinalIgnoreCase) >= 0 ||
                 text.IndexOf("already exists", StringComparison.OrdinalIgnoreCase) >= 0 ||
                 text.IndexOf("Duplicate ID", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        private static JObject CreateAbsolutePointerEvent(string axis, int value)
+        {
+            return new JObject
+            {
+                ["type"] = "abs",
+                ["data"] = new JObject
+                {
+                    ["axis"] = axis,
+                    ["value"] = value
+                }
+            };
+        }
+
+        private static void AppendPointerButtonTransition(JArray events, int previousMask, int buttonMask, int bit, string button)
+        {
+            bool wasDown = (previousMask & bit) != 0;
+            bool isDown = (buttonMask & bit) != 0;
+            if (wasDown == isDown)
+            {
+                return;
+            }
+
+            events.Add(new JObject
+            {
+                ["type"] = "btn",
+                ["data"] = new JObject
+                {
+                    ["button"] = button,
+                    ["down"] = isDown
+                }
+            });
+        }
+
+        private static int ScaleAbsolutePointerCoordinate(int value, int extent)
+        {
+            int maximum = Math.Max(1, extent - 1);
+            int clamped = Math.Max(0, Math.Min(maximum, value));
+            return (int)((long)clamped * 0x7fffL / maximum);
         }
 
         private static string FormatError(JToken error)

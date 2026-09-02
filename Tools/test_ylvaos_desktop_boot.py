@@ -8,6 +8,7 @@ import base64
 import gzip
 import hashlib
 import json
+import re
 import shutil
 import socket
 import struct
@@ -141,6 +142,9 @@ class HostInputServer:
     def send_paste(self, text: str) -> None:
         payload = base64.b64encode(text.encode("utf-8")).decode("ascii")
         self.send_line(f"YLVAOS_HOST {self.token} paste-b64 {payload}")
+
+    def send_pointer(self, x: int, y: int, previous_mask: int, button_mask: int) -> None:
+        self.send_line(f"YLVAOS_HOST {self.token} pointer {x} {y} {previous_mask} {button_mask}")
 
     def send_line(self, line: str) -> None:
         data = (line + "\n").encode("ascii")
@@ -297,6 +301,7 @@ class VncProbe:
         self.height = 0
         self.stop_event = threading.Event()
         self.reader: threading.Thread | None = None
+        self.write_lock = threading.Lock()
 
     def close(self) -> None:
         self.stop_event.set()
@@ -338,7 +343,8 @@ class VncProbe:
 
     def send_key(self, key_sym: int, down: bool) -> None:
         assert self.sock is not None
-        self.sock.sendall(struct.pack(">BBHI", 4, 1 if down else 0, 0, key_sym))
+        with self.write_lock:
+            self.sock.sendall(struct.pack(">BBHI", 4, 1 if down else 0, 0, key_sym))
 
     def keypress(self, key_sym: int) -> None:
         self.send_key(key_sym, True)
@@ -367,13 +373,14 @@ class VncProbe:
         assert self.sock is not None
         x = max(0, min(65535, x))
         y = max(0, min(65535, y))
-        self.sock.sendall(struct.pack(">BBHH", 5, button_mask & 0xFF, x, y))
+        with self.write_lock:
+            self.sock.sendall(struct.pack(">BBHH", 5, button_mask & 0xFF, x, y))
 
     def click(self, x: int, y: int) -> None:
         self.send_pointer(x, y, 0)
-        time.sleep(0.05)
+        time.sleep(0.10)
         self.send_pointer(x, y, 1)
-        time.sleep(0.05)
+        time.sleep(0.15)
         self.send_pointer(x, y, 0)
 
     def _read_exact(self, size: int) -> bytes:
@@ -433,7 +440,8 @@ class VncProbe:
         assert self.sock is not None
         width = max(1, self.width)
         height = max(1, self.height)
-        self.sock.sendall(struct.pack(">BBHHHH", 3, 1 if incremental else 0, 0, 0, width, height))
+        with self.write_lock:
+            self.sock.sendall(struct.pack(">BBHHHH", 3, 1 if incremental else 0, 0, 0, width, height))
 
     def _read_loop(self) -> None:
         try:
@@ -517,17 +525,35 @@ class QmpInput:
             if qcode is not None:
                 self.keypress(qcode)
 
-    def click(self, x: int, y: int) -> None:
+    def click(self, x: int, y: int, width: int, height: int) -> None:
+        absolute_x = round(max(0, min(width - 1, x)) * 0x7FFF / max(1, width - 1))
+        absolute_y = round(max(0, min(height - 1, y)) * 0x7FFF / max(1, height - 1))
         self._execute(
             {
                 "execute": "input-send-event",
                 "arguments": {
                     "events": [
-                        {"type": "abs", "data": {"axis": "x", "value": x}},
-                        {"type": "abs", "data": {"axis": "y", "value": y}},
-                        {"type": "btn", "data": {"button": "left", "down": True}},
-                        {"type": "btn", "data": {"button": "left", "down": False}},
+                        {"type": "abs", "data": {"axis": "x", "value": absolute_x}},
+                        {"type": "abs", "data": {"axis": "y", "value": absolute_y}},
                     ]
+                },
+            }
+        )
+        time.sleep(0.10)
+        self._execute(
+            {
+                "execute": "input-send-event",
+                "arguments": {
+                    "events": [{"type": "btn", "data": {"button": "left", "down": True}}]
+                },
+            }
+        )
+        time.sleep(0.15)
+        self._execute(
+            {
+                "execute": "input-send-event",
+                "arguments": {
+                    "events": [{"type": "btn", "data": {"button": "left", "down": False}}]
                 },
             }
         )
@@ -539,6 +565,7 @@ class QmpInput:
                 "arguments": {"type": "user", "id": "ylva_net"},
             }
         )
+
         self._execute_allow_duplicate(
             {
                 "execute": "device_add",
@@ -650,12 +677,17 @@ def print_input_diagnostics(console: Console) -> None:
     run_command(console, command, "YlvaOS:~$", 60)
 
 
-def prepare_disk(root: Path, copy_disk: bool) -> Path:
+def prepare_disk(root: Path, copy_disk: bool, reuse_test_disk: bool) -> Path:
+    destination = root / "_work" / "test-ylvaos-desktop.qcow2"
+    if reuse_test_disk:
+        if not destination.is_file():
+            raise FileNotFoundError(f"Reusable test disk was not found: {destination}")
+        return destination
+
     if not copy_disk:
         return root / "_work" / "ylvaos-image" / "disk.qcow2"
 
     source = root / "Mod_YlvaOS" / "vm" / "disk.qcow2.gz"
-    destination = root / "_work" / "test-ylvaos-desktop.qcow2"
     if destination.exists():
         destination.unlink()
     with gzip.open(source, "rb") as src, destination.open("wb") as dst:
@@ -666,6 +698,8 @@ def prepare_disk(root: Path, copy_disk: bool) -> Path:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--copy-disk", action="store_true")
+    parser.add_argument("--reuse-test-disk", action="store_true", help="Reuse the prior writable desktop test disk for diagnostics.")
+    parser.add_argument("--quick-pointer", action="store_true", help="Skip online/audio checks and verify the desktop host-input click path.")
     parser.add_argument("--elona-dir", type=Path, help="Optional local Elona directory used for a short Wine launch smoke test.")
     args = parser.parse_args()
 
@@ -673,7 +707,7 @@ def main() -> int:
     qemu = root / "Mod_YlvaOS" / "Tools" / "qemu" / "qemu-system-x86_64.exe"
     kernel = root / "Mod_YlvaOS" / "vm" / "assets" / "vmlinuz"
     initrd = root / "Mod_YlvaOS" / "vm" / "assets" / "initrd.img"
-    disk = prepare_disk(root, args.copy_disk)
+    disk = prepare_disk(root, args.copy_disk, args.reuse_test_disk)
     update_dir = root / "Mod_YlvaOS" / "vm" / "update"
     import_dir = root / "_work" / "ylvaos-import-test"
     if import_dir.exists():
@@ -780,12 +814,79 @@ def main() -> int:
         qmp.connect()
         console.wait_for_any(["YlvaOS:~$"], 180)
         snapshot = console_snapshot(console)
-        if "^           Ylva OS" not in snapshot or "(  * *)   by aoi_nasuko" not in snapshot or "Alpine Linux 3.24.1 base / YlvaOS 0.02" not in snapshot:
+        if "^           Ylva OS" not in snapshot or "(  * *)   by aoi_nasuko" not in snapshot or "Alpine Linux 3.24.1 base / YlvaOS 0.04" not in snapshot:
             raise RuntimeError("YlvaOS login splash was not printed")
         width, height = probe.read_framebuffer_size()
         print(f"[vnc] framebuffer {width}x{height}")
         if width <= 0 or height <= 0:
             raise RuntimeError("VNC framebuffer has an invalid size")
+        if args.quick_pointer:
+            run_command(console, "Desktop", "YlvaOS:~$", 90)
+            control.wait_for("mode desktop-starting", 30)
+            control.wait_for("mode desktop", 90)
+            run_command(
+                console,
+                "DISPLAY=:0 Settings; sleep 2; "
+                "DISPLAY=:0 xdotool search --name 'YlvaOS Settings' | head -n 1 >/tmp/ylva-settings-window; "
+                "win=$(cat /tmp/ylva-settings-window); DISPLAY=:0 xdotool windowactivate \"$win\" windowfocus \"$win\"; sleep 1",
+                "YlvaOS:~$",
+                30,
+            )
+            run_command(
+                console,
+                "DISPLAY=:0 sh -c 'win=$(cat /tmp/ylva-settings-window); eval \"$(xdotool getwindowgeometry --shell \"$win\")\"; ext=$(xprop -id \"$win\" _NET_FRAME_EXTENTS 2>/dev/null | sed \"s/.*=//;s/,//g\"); set -- $ext; printf \"\\137\\137YLVA_SETTINGS_GEOM\\137\\137 %s %s %s %s %s %s %s %s\\n\" \"$X\" \"$Y\" \"$WIDTH\" \"$HEIGHT\" \"${1:-0}\" \"${2:-0}\" \"${3:-0}\" \"${4:-0}\"'",
+                "YlvaOS:~$",
+                30,
+            )
+            match = re.search(r"__YLVA_SETTINGS_GEOM__\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)", console_snapshot(console))
+            if match is None:
+                raise RuntimeError("Could not read YlvaOS Settings geometry")
+            settings_x, settings_y, settings_width, _settings_height, _left_ext, right_ext, top_ext, _bottom_ext = (int(value) for value in match.groups())
+            settings_click_x = settings_x + settings_width + right_ext - 9
+            settings_click_y = settings_y - top_ext + max(10, top_ext // 2 + 2)
+            host_input.send_pointer(settings_click_x, settings_click_y, 0, 0)
+            time.sleep(1)
+            host_input.send_pointer(settings_click_x, settings_click_y, 0, 1)
+            time.sleep(0.15)
+            host_input.send_pointer(settings_click_x, settings_click_y, 1, 0)
+            time.sleep(1)
+            run_command(
+                console,
+                "DISPLAY=:0 sh -c 'if xdotool search --name \"YlvaOS Settings\" >/dev/null 2>&1; then status=1; else status=0; fi; printf \"\\137\\137YLVA_SETTINGS_STATUS_HOSTINPUT\\137\\137:%s\\n\" \"$status\"'",
+                "YlvaOS:~$",
+                30,
+            )
+            if "__YLVA_SETTINGS_STATUS_HOSTINPUT__:0" not in console_snapshot(console):
+                raise RuntimeError("The host-input channel did not deliver the left click")
+            run_command(
+                console,
+                "mkdir -p ~/ClickTest/OpenMe; DISPLAY=:0 Files ~/ClickTest; sleep 3; "
+                "win=$(DISPLAY=:0 xdotool search --class pcmanfm | tail -n 1); "
+                "DISPLAY=:0 xdotool windowmove --sync \"$win\" 100 100 windowsize --sync \"$win\" 800 600 windowactivate \"$win\" windowfocus \"$win\"; sleep 2",
+                "YlvaOS:~$",
+                30,
+            )
+            folder_x = 303
+            folder_y = 220
+            for _ in range(2):
+                host_input.send_pointer(folder_x, folder_y, 0, 1)
+                time.sleep(0.12)
+                host_input.send_pointer(folder_x, folder_y, 1, 0)
+                time.sleep(0.12)
+            time.sleep(2)
+            run_command(
+                console,
+                "win=$(DISPLAY=:0 xdotool search --class pcmanfm | tail -n 1); "
+                "title=$(DISPLAY=:0 xdotool getwindowname \"$win\"); "
+                "printf '\\137\\137YLVA_FILE_MANAGER_TITLE\\137\\137:%s\\n' \"$title\"",
+                "YlvaOS:~$",
+                30,
+            )
+            if "__YLVA_FILE_MANAGER_TITLE__:OpenMe" not in console_snapshot(console):
+                raise RuntimeError("The host-input channel did not deliver the file-manager double click")
+            run_command(console, "poweroff", "Power down", 60)
+            process.wait(timeout=60)
+            return 0
         run_command(console, "command -v Desktop && command -v Kernel && command -v ConnectNetwork && command -v Settings && command -v Files && command -v pcmanfm && command -v mc && command -v dialog && command -v ylva-splash && command -v ylva-host-agent && test -x /usr/lib/ylvaos/update-from-mod", "YlvaOS:~$", 60)
         snapshot = console_snapshot(console)
         for path in ["/usr/bin/Desktop", "/usr/bin/Kernel", "/usr/bin/ConnectNetwork", "/usr/bin/Settings", "/usr/bin/Files", "/usr/bin/pcmanfm", "/usr/bin/mc", "/usr/bin/dialog", "/usr/bin/ylva-splash", "/usr/bin/ylva-host-agent"]:
@@ -839,7 +940,8 @@ def main() -> int:
         run_command(
             console,
             "for cmd in wine pactl pacat parec speaker-test YlvaOS Settings Files pcmanfm mc dialog; do command -v \"$cmd\"; done; "
-            "for path in /usr/lib/ylvaos/setup-audio /usr/lib/ylvaos/setup-font /usr/lib/ylvaos/setup-wine; do test -x \"$path\" && echo \"$path\"; done; "
+            "for cmd in ylva-midi-bridge; do command -v \"$cmd\"; done; "
+            "for path in /usr/lib/ylvaos/setup-audio /usr/lib/ylvaos/setup-font /usr/lib/ylvaos/setup-wine /usr/lib/ylvaos/configure-wine-midi /usr/lib/ylvaos/registry-helpers; do test -r \"$path\" && echo \"$path\"; done; "
             "! command -v ylva-audio-test >/dev/null 2>&1 && "
             "! command -v ylva-configure-wine >/dev/null 2>&1 && "
             "! command -v ylva-wine-init >/dev/null 2>&1 && "
@@ -851,7 +953,7 @@ def main() -> int:
         )
         snapshot = console_snapshot(console)
         for path in [
-            "/usr/bin/wine",
+            "/usr/local/bin/wine",
             "/usr/bin/pactl",
             "/usr/bin/pacat",
             "/usr/bin/parec",
@@ -862,9 +964,12 @@ def main() -> int:
             "/usr/bin/pcmanfm",
             "/usr/bin/mc",
             "/usr/bin/dialog",
+            "/usr/bin/ylva-midi-bridge",
             "/usr/lib/ylvaos/setup-audio",
             "/usr/lib/ylvaos/setup-font",
             "/usr/lib/ylvaos/setup-wine",
+            "/usr/lib/ylvaos/configure-wine-midi",
+            "/usr/lib/ylvaos/registry-helpers",
         ]:
             if path not in snapshot:
                 raise RuntimeError(f"{path} was not found in the guest")
@@ -879,14 +984,15 @@ def main() -> int:
         snapshot = console_snapshot(console)
         if "wine-" not in snapshot or "__YLVA_PULSE_SINK__" not in snapshot:
             raise RuntimeError("Wine or the YlvaOS PulseAudio sink did not start")
+        wine_setup_start = console_length(console)
         run_command(
             console,
-            "YlvaOS setup wine >/tmp/ylva-wine-setup.log 2>&1; wine reg query 'HKLM\\System\\CurrentControlSet\\Control\\Nls\\CodePage' /v ACP; wine reg query 'HKCU\\Software\\Wine\\Drivers' /v Audio; fc-match 'MS Gothic'; printf '\\137\\137YLVA_WINE_CONFIGURED\\137\\137\\n'",
+            "YlvaOS setup wine >/tmp/ylva-wine-setup.log 2>&1; wine reg query 'HKLM\\System\\CurrentControlSet\\Control\\Nls\\CodePage' /v ACP; wine reg query 'HKCU\\Software\\Wine\\Drivers' /v Audio | grep -qi pulse && printf '\\137\\137YLVA_WINE_PULSE_OK\\137\\137\\n'; test -s ~/.wine/.ylvaos-midi-target && cat ~/.wine/.ylvaos-midi-target; fc-match 'MS Gothic'; printf '\\137\\137YLVA_WINE_CONFIGURED\\137\\137\\n'",
             "YlvaOS:~$",
             240,
         )
-        snapshot = console_snapshot(console)
-        if "__YLVA_WINE_CONFIGURED__" not in snapshot or "932" not in snapshot or "alsa" not in snapshot or "Noto Sans CJK JP" not in snapshot:
+        snapshot = console_snapshot(console)[wine_setup_start:]
+        if "__YLVA_WINE_CONFIGURED__" not in snapshot or "932" not in snapshot or "__YLVA_WINE_PULSE_OK__" not in snapshot or "#" not in snapshot or "Noto Sans CJK JP" not in snapshot:
             raise RuntimeError("Wine Japanese locale/font configuration did not complete")
         audio.reset_signal()
         run_command(
@@ -938,7 +1044,8 @@ def main() -> int:
             "grep -q 'action name=\"Iconify\"' ~/.config/openbox/rc.xml && "
             "grep -q 'context name=\"Maximize\"' ~/.config/openbox/rc.xml && "
             "grep -q 'action name=\"ToggleMaximize\"' ~/.config/openbox/rc.xml && "
-            "! grep -q 'context name=\"Client\"' ~/.config/openbox/rc.xml && "
+            "grep -q 'context name=\"Client\"' ~/.config/openbox/rc.xml && "
+            "grep -q 'button=\"A-Left\"' ~/.config/openbox/rc.xml && "
             "printf '\\137\\137YLVA_WINDOW_BUTTON_BINDS_OK\\137\\137\\n'",
             "YlvaOS:~$",
             30,
@@ -954,6 +1061,76 @@ def main() -> int:
         snapshot = console_snapshot(console)
         if "__YLVA_SETTINGS_VISIBLE__" not in snapshot:
             raise RuntimeError("YlvaOS Settings did not open on the desktop")
+        run_command(
+            console,
+            "DISPLAY=:0 sh -c 'win=$(cat /tmp/ylva-settings-window); eval \"$(xdotool getwindowgeometry --shell \"$win\")\"; ext=$(xprop -id \"$win\" _NET_FRAME_EXTENTS 2>/dev/null | sed \"s/.*=//;s/,//g\"); set -- $ext; printf \"\\137\\137YLVA_SETTINGS_GEOM\\137\\137 %s %s %s %s %s %s %s %s\\n\" \"$X\" \"$Y\" \"$WIDTH\" \"$HEIGHT\" \"${1:-0}\" \"${2:-0}\" \"${3:-0}\" \"${4:-0}\"'",
+            "YlvaOS:~$",
+            30,
+        )
+        snapshot = console_snapshot(console)
+        match = re.search(r"__YLVA_SETTINGS_GEOM__\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)", snapshot)
+        if match is None:
+            raise RuntimeError("Could not read YlvaOS Settings geometry")
+        settings_x, settings_y, settings_width, _settings_height, left_ext, right_ext, top_ext, _bottom_ext = (int(value) for value in match.groups())
+        settings_click_x = settings_x + settings_width + right_ext - 9
+        settings_click_y = settings_y - top_ext + max(10, top_ext // 2 + 2)
+        probe.click(settings_click_x, settings_click_y)
+        time.sleep(1)
+        close_status_start = console_length(console)
+        run_command(
+            console,
+            "DISPLAY=:0 sh -c 'if xdotool search --name \"YlvaOS Settings\" >/dev/null 2>&1; then status=1; else status=0; fi; printf \"\\137\\137YLVA_SETTINGS_STATUS\\137\\137:%s\\n\" \"$status\"'",
+            "YlvaOS:~$",
+            30,
+        )
+        snapshot = console_snapshot(console)[close_status_start:]
+        if "__YLVA_SETTINGS_STATUS__:0" not in snapshot:
+            print("[vnc] left click did not close Settings; trying the virtio host-input channel")
+            host_input.send_pointer(settings_click_x, settings_click_y, 0, 1)
+            time.sleep(0.15)
+            host_input.send_pointer(settings_click_x, settings_click_y, 1, 0)
+            time.sleep(1)
+            close_status_start = console_length(console)
+            run_command(
+                console,
+                "DISPLAY=:0 sh -c 'if xdotool search --name \"YlvaOS Settings\" >/dev/null 2>&1; then status=1; else status=0; fi; printf \"\\137\\137YLVA_SETTINGS_STATUS_HOSTINPUT\\137\\137:%s\\n\" \"$status\"'",
+                "YlvaOS:~$",
+                30,
+            )
+            snapshot = console_snapshot(console)[close_status_start:]
+        if "__YLVA_SETTINGS_STATUS_HOSTINPUT__:0" not in snapshot and "__YLVA_SETTINGS_STATUS__:0" not in snapshot:
+            print("[host-input] left click did not close Settings; trying QMP input-send-event fallback")
+            qmp.click(settings_click_x, settings_click_y, 1024, 768)
+            time.sleep(1)
+            close_status_start = console_length(console)
+            run_command(
+                console,
+                "DISPLAY=:0 sh -c 'if xdotool search --name \"YlvaOS Settings\" >/dev/null 2>&1; then status=1; else status=0; fi; printf \"\\137\\137YLVA_SETTINGS_STATUS_QMP\\137\\137:%s\\n\" \"$status\"'",
+                "YlvaOS:~$",
+                30,
+            )
+            snapshot = console_snapshot(console)[close_status_start:]
+            if "__YLVA_SETTINGS_STATUS_QMP__:0" not in snapshot:
+                run_command(
+                    console,
+                    "printf '\\137\\137YLVA_HOST_INPUT_LOG\\137\\137\\n'; "
+                    "cat /tmp/ylva-host-agent.log 2>/dev/null || true; "
+                    "DISPLAY=:0 xdotool getmouselocation 2>/dev/null || true",
+                    "YlvaOS:~$",
+                    30,
+                )
+                run_command(
+                    console,
+                    f"DISPLAY=:0 xdotool mousemove --sync {settings_click_x} {settings_click_y} click 1; sleep 1; "
+                    "if xdotool search --name 'YlvaOS Settings' >/dev/null 2>&1; then status=1; else status=0; fi; "
+                    "printf '\\137\\137YLVA_SETTINGS_STATUS_XDOTOOL\\137\\137:%s\\n' \"$status\"",
+                    "YlvaOS:~$",
+                    30,
+                )
+                snapshot = console_snapshot(console)
+                if "__YLVA_SETTINGS_STATUS_XDOTOOL__:0" in snapshot:
+                    raise RuntimeError("Guest xdotool closed Settings, but VNC, host-input, and QMP did not deliver the left click")
+                raise RuntimeError("VNC, QMP, and guest xdotool could not close Settings at the calculated title-bar coordinate")
         run_command(console, "DISPLAY=:0 Files; sleep 3; pgrep -fa '[p]cmanfm|[m]c' >/tmp/ylva-files-processes; test -s /tmp/ylva-files-processes && cat /tmp/ylva-files-processes && printf '\\137\\137YLVA_FILES_OPENED\\137\\137\\n'", "YlvaOS:~$", 30)
         snapshot = console_snapshot(console)
         if "__YLVA_FILES_OPENED__" not in snapshot:
@@ -997,21 +1174,52 @@ def main() -> int:
         if "__YLVA_TERMINAL_REOPENED__" not in snapshot:
             raise RuntimeError("Ctrl+Alt+T did not reopen the desktop terminal")
         if args.elona_dir is not None:
+            directmusic_start = console_length(console)
             run_command(
                 console,
-                "DISPLAY=:0 sh -c '. /usr/lib/ylvaos/wine-env; YlvaOS setup wine >/tmp/ylva-wine-setup.log 2>&1 || true; cd ~/ElonaTest && wine elona.exe >/tmp/ylva-elona.log 2>&1 &' ; sleep 20; pgrep -fa '[e]lona.exe' >/tmp/ylva-elona-processes.txt; if [ -s /tmp/ylva-elona-processes.txt ]; then cat /tmp/ylva-elona-processes.txt; printf '\\137\\137YLVA_ELONA_STARTED\\137\\137\\n'; else tail -n 80 /tmp/ylva-elona.log; printf '\\137\\137YLVA_ELONA_NOT_RUNNING\\137\\137\\n'; fi; wineserver -k >/dev/null 2>&1 || true",
+                "DISPLAY=:0 YLVAOS_INSTALL_DIRECTMUSIC=yes YlvaOS setup wine directmusic >/tmp/ylva-directmusic-setup.log 2>&1; status=$?; if [ \"$status\" -eq 0 ] && [ -f ~/.wine/.ylvaos-directmusic-runtime-v2 ]; then printf '\\137\\137YLVA_DIRECTMUSIC_READY\\137\\137\\n'; else tail -n 120 /tmp/ylva-directmusic-setup.log /tmp/ylva-winetricks-directmusic.log /tmp/ylva-winetricks-apk.log /tmp/ylva-winetricks-download.log 2>/dev/null; printf '\\137\\137YLVA_DIRECTMUSIC_FAILED:%s\\137\\137\\n' \"$status\"; fi",
+                "YlvaOS:~$",
+                900,
+            )
+            snapshot = console_snapshot(console)[directmusic_start:]
+            if "__YLVA_DIRECTMUSIC_READY__" not in snapshot or "__YLVA_DIRECTMUSIC_FAILED:" in snapshot:
+                raise RuntimeError("The DirectMusic runtime could not be installed for the Elona audio test")
+            audio.reset_signal()
+            run_command(
+                console,
+                "DISPLAY=:0 sh -c '. /usr/lib/ylvaos/wine-env; cd ~/ElonaTest && cp original/config.txt config.txt && sed -i \"s/^language.*/language.\\t\\\"0\\\"/\" config.txt && WINEDEBUG=+loaddll,+dmusic,+dmime,+dmsynth,+dmband,+midi,+wave,+dsound wine elona.exe >/tmp/ylva-elona.log 2>&1 &' ; sleep 20; pgrep -fa '[e]lona.exe' >/tmp/ylva-elona-processes.txt; if [ -s /tmp/ylva-elona-processes.txt ]; then cat /tmp/ylva-elona-processes.txt; printf '\\137\\137YLVA_ELONA_STARTED\\137\\137\\n'; else tail -n 80 /tmp/ylva-elona.log; printf '\\137\\137YLVA_ELONA_NOT_RUNNING\\137\\137\\n'; fi",
                 "YlvaOS:~$",
                 90,
             )
             snapshot = console_snapshot(console)
             if "__YLVA_ELONA_STARTED__" not in snapshot:
                 raise RuntimeError("Elona did not remain running under Wine long enough for the smoke test")
+            try:
+                audio.wait_for_signal(64, 30)
+                run_command(
+                    console,
+                    "grep -Eqi 'Loaded .*\\\\(dmband|dmcompos|dmime|dmloader|dmstyle|dmsynth|dmusic|dswave)\\.dll.*native' /tmp/ylva-elona.log && printf '\\137\\137YLVA_ELONA_DIRECTMUSIC_LOADED\\137\\137\\n'",
+                    "YlvaOS:~$",
+                    30,
+                )
+                if "__YLVA_ELONA_DIRECTMUSIC_LOADED__" not in console_snapshot(console):
+                    raise RuntimeError("Elona produced audio without loading the installed native DirectMusic runtime")
+            except TimeoutError:
+                run_command(
+                    console,
+                    "echo __YLVA_ELONA_AUDIO_DIAG__; pactl list short sink-inputs 2>/dev/null || true; aconnect -l 2>/dev/null || true; wine reg query 'HKCU\\Software\\Wine\\DllOverrides' 2>/dev/null || true; for dll in dmband dmcompos dmime dmloader dmscript dmstyle dmsynth dmusic dmusic32 dsound dswave; do ls -l \"$HOME/.wine/drive_c/windows/system32/$dll.dll\" 2>/dev/null || true; done; grep -Eai 'dmband|dmcompos|dmime|dmloader|dmscript|dmstyle|dmsynth|dmusic|dsound|dswave|midi|pulse|audio|err:' /tmp/ylva-elona.log 2>/dev/null | tail -n 240 || true; tail -n 80 /tmp/ylva-midi-bridge.log /tmp/ylva-fluidsynth.log /tmp/ylva-pulseaudio.log 2>/dev/null || true; echo __YLVA_ELONA_AUDIO_DIAG_END__",
+                    "YlvaOS:~$",
+                    60,
+                )
+                raise
+            finally:
+                run_command(console, "wineserver -k >/dev/null 2>&1 || true", "YlvaOS:~$", 30)
         try:
             probe.click(80, 80)
             probe.send_text("kernel\n")
             control.wait_for("mode kernel", 12)
         except TimeoutError:
-            qmp.click(80, 80)
+            qmp.click(80, 80, 1024, 768)
             qmp.send_text("kernel\n")
             try:
                 control.wait_for("mode kernel", 30)

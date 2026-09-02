@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Text;
 using UnityEngine;
 using UnityEngine.Events;
+using UnityEngine.EventSystems;
 using UnityEngine.UI;
 
 namespace YlvaOS
@@ -13,6 +14,8 @@ namespace YlvaOS
         private const int MaxClipboardPasteLength = 4096;
         private const int VmPasteCharsPerFrame = 3;
         private const float VmPasteIntervalSeconds = 0.0125f;
+        private const float DesktopSyntheticClickHoldSeconds = 0.12f;
+        private const int DesktopClickDragTolerancePixels = 6;
         private static readonly DesktopKeyBinding[] DesktopKeyBindings = new DesktopKeyBinding[]
         {
             new DesktopKeyBinding(KeyCode.LeftShift, 0xffe1),
@@ -139,7 +142,19 @@ namespace YlvaOS
         private int lastDesktopMouseY = -1;
         private int lastDesktopButtonMask = -1;
         private int lastDesktopInputFrame = -1;
+        private float leftButtonHoldUntil;
+        private float middleButtonHoldUntil;
+        private float rightButtonHoldUntil;
         private float vmPasteTimer;
+        private bool desktopPointerInside;
+        private bool hostCursorSuppressed;
+        private bool previousCursorVisible = true;
+        private bool previousCursorSystemDisabled;
+        private bool cursorSystemSuppressionCaptured;
+        private int desktopClickAnchorMask;
+        private int desktopClickAnchorX = -1;
+        private int desktopClickAnchorY = -1;
+        private bool desktopClickAnchorDragging;
         private readonly HashSet<uint> downDesktopKeySyms = new HashSet<uint>();
         private readonly Queue<char> vmPasteQueue = new Queue<char>();
         private readonly Vector3[] desktopWorldCorners = new Vector3[4];
@@ -180,15 +195,17 @@ namespace YlvaOS
 
         public override void OnUpdateInput()
         {
-            EInput.Consume(consumeAxis: true, _skipFrame: 1);
-
             if (machine != null && machine.IsDesktopMode)
             {
+                ConsumeDesktopHostInput();
                 machine.PumpExternalOutput();
                 UpdateDesktopFrame();
+                UpdateHostCursorSuppression();
                 HandleDesktopInput();
                 return;
             }
+
+            EInput.Consume(consumeAxis: true, _skipFrame: 1);
 
             if (machine != null && machine.IsVmConsoleActive)
             {
@@ -286,6 +303,8 @@ namespace YlvaOS
         public override void OnKill()
         {
             ReleaseAllDesktopKeys();
+            ClearDesktopClickAnchor();
+            RestoreHostCursor();
             vmPasteQueue.Clear();
             if (machine != null)
             {
@@ -312,7 +331,8 @@ namespace YlvaOS
             bool externalOutput = machine != null && machine.PumpExternalOutput();
             if (machine != null && machine.IsDesktopMode)
             {
-                EInput.Consume(consumeAxis: true, _skipFrame: 1);
+                ConsumeDesktopHostInput();
+                UpdateHostCursorSuppression();
                 HandleDesktopInput();
                 int fps = machine.Vm != null ? machine.Vm.Config.DesktopRefreshFps : 24;
                 float interval = 1f / Mathf.Max(5, fps);
@@ -326,6 +346,8 @@ namespace YlvaOS
             else
             {
                 desktopFrameTimer = 0f;
+                desktopPointerInside = false;
+                RestoreHostCursor();
             }
 
             cursorTimer += Time.unscaledDeltaTime;
@@ -344,6 +366,14 @@ namespace YlvaOS
                 }
 
                 Close();
+            }
+        }
+
+        private void LateUpdate()
+        {
+            if (machine != null && machine.IsDesktopMode)
+            {
+                UpdateHostCursorSuppression();
             }
         }
 
@@ -542,6 +572,8 @@ namespace YlvaOS
         {
             if (desktopImage == null || desktopTextureWidth <= 0 || desktopTextureHeight <= 0)
             {
+                desktopPointerInside = false;
+                RestoreHostCursor();
                 return;
             }
 
@@ -549,6 +581,9 @@ namespace YlvaOS
             int y;
             if (!TryGetDesktopPointer(out x, out y))
             {
+                desktopPointerInside = false;
+                RestoreHostCursor();
+                ClearDesktopClickAnchor();
                 if (lastDesktopButtonMask > 0 && lastDesktopMouseX >= 0 && lastDesktopMouseY >= 0)
                 {
                     machine.SendDesktopPointer(lastDesktopMouseX, lastDesktopMouseY, 0);
@@ -558,53 +593,175 @@ namespace YlvaOS
                 return;
             }
 
+            int mask = BuildDesktopMouseButtonMask();
+            Vector2 wheel = Input.mouseScrollDelta;
+
+            desktopPointerInside = true;
+            ConsumeDesktopHostInput();
+            if (wheel.y > 0.01f)
+            {
+                SendDesktopPointerState(x, y, mask | 8, force: true);
+                SendDesktopPointerState(x, y, mask, force: true);
+            }
+            else if (wheel.y < -0.01f)
+            {
+                SendDesktopPointerState(x, y, mask | 16, force: true);
+                SendDesktopPointerState(x, y, mask, force: true);
+            }
+
+            SendDesktopPointerState(x, y, mask, force: false);
+        }
+
+        private int BuildDesktopMouseButtonMask()
+        {
+            float now = Time.unscaledTime;
+            bool leftUp = Input.GetMouseButtonUp(0);
+            bool middleUp = Input.GetMouseButtonUp(2);
+            bool rightUp = Input.GetMouseButtonUp(1);
+
+            if (leftUp)
+            {
+                leftButtonHoldUntil = 0f;
+            }
+            else if (Input.GetMouseButtonDown(0))
+            {
+                leftButtonHoldUntil = Mathf.Max(leftButtonHoldUntil, now + DesktopSyntheticClickHoldSeconds);
+            }
+
+            if (middleUp)
+            {
+                middleButtonHoldUntil = 0f;
+            }
+            else if (Input.GetMouseButtonDown(2))
+            {
+                middleButtonHoldUntil = Mathf.Max(middleButtonHoldUntil, now + DesktopSyntheticClickHoldSeconds);
+            }
+
+            if (rightUp)
+            {
+                rightButtonHoldUntil = 0f;
+            }
+            else if (Input.GetMouseButtonDown(1))
+            {
+                rightButtonHoldUntil = Mathf.Max(rightButtonHoldUntil, now + DesktopSyntheticClickHoldSeconds);
+            }
+
             int mask = 0;
-            if (Input.GetMouseButton(0))
+            if (Input.GetMouseButton(0) || (!leftUp && now < leftButtonHoldUntil))
             {
                 mask |= 1;
             }
 
-            if (Input.GetMouseButton(2))
+            if (Input.GetMouseButton(2) || (!middleUp && now < middleButtonHoldUntil))
             {
                 mask |= 2;
             }
 
-            if (Input.GetMouseButton(1))
+            if (Input.GetMouseButton(1) || (!rightUp && now < rightButtonHoldUntil))
             {
                 mask |= 4;
             }
 
-            Vector2 wheel = Input.mouseScrollDelta;
-            if (wheel.y > 0.01f)
+            return mask;
+        }
+
+        private void SendDesktopPointerState(int x, int y, int mask, bool force)
+        {
+            if (machine == null)
             {
-                machine.SendDesktopPointer(x, y, mask | 8);
-                machine.SendDesktopPointer(x, y, mask);
-            }
-            else if (wheel.y < -0.01f)
-            {
-                machine.SendDesktopPointer(x, y, mask | 16);
-                machine.SendDesktopPointer(x, y, mask);
+                return;
             }
 
-            if (x != lastDesktopMouseX || y != lastDesktopMouseY || mask != lastDesktopButtonMask)
+            StabilizeDesktopClick(ref x, ref y, mask);
+
+            if (!force && x == lastDesktopMouseX && y == lastDesktopMouseY && mask == lastDesktopButtonMask)
             {
-                machine.SendDesktopPointer(x, y, mask);
-                lastDesktopMouseX = x;
-                lastDesktopMouseY = y;
-                lastDesktopButtonMask = mask;
+                return;
             }
+
+            machine.SendDesktopPointer(x, y, mask);
+            lastDesktopMouseX = x;
+            lastDesktopMouseY = y;
+            lastDesktopButtonMask = mask;
+        }
+
+        private void StabilizeDesktopClick(ref int x, ref int y, int mask)
+        {
+            int holdMask = mask & 7;
+            int previousHoldMask = lastDesktopButtonMask < 0 ? 0 : lastDesktopButtonMask & 7;
+            if (previousHoldMask == 0 && holdMask != 0)
+            {
+                desktopClickAnchorMask = holdMask;
+                desktopClickAnchorX = x;
+                desktopClickAnchorY = y;
+                desktopClickAnchorDragging = false;
+            }
+
+            if (desktopClickAnchorMask == 0)
+            {
+                return;
+            }
+
+            if (holdMask != 0)
+            {
+                if (!desktopClickAnchorDragging && IsDesktopClickDrag(x, y))
+                {
+                    desktopClickAnchorDragging = true;
+                }
+
+                if (!desktopClickAnchorDragging)
+                {
+                    x = desktopClickAnchorX;
+                    y = desktopClickAnchorY;
+                }
+
+                return;
+            }
+
+            if (!desktopClickAnchorDragging)
+            {
+                x = desktopClickAnchorX;
+                y = desktopClickAnchorY;
+            }
+
+            ClearDesktopClickAnchor();
+        }
+
+        private bool IsDesktopClickDrag(int x, int y)
+        {
+            if (desktopClickAnchorX < 0 || desktopClickAnchorY < 0)
+            {
+                return false;
+            }
+
+            int dx = x - desktopClickAnchorX;
+            int dy = y - desktopClickAnchorY;
+            return dx * dx + dy * dy > DesktopClickDragTolerancePixels * DesktopClickDragTolerancePixels;
+        }
+
+        private void ClearDesktopClickAnchor()
+        {
+            desktopClickAnchorMask = 0;
+            desktopClickAnchorX = -1;
+            desktopClickAnchorY = -1;
+            desktopClickAnchorDragging = false;
         }
 
         private bool TryGetDesktopPointer(out int x, out int y)
+        {
+            return TryGetDesktopPointer(Input.mousePosition, out x, out y);
+        }
+
+        private bool TryGetDesktopPointer(Vector2 screenPosition, out int x, out int y)
         {
             x = 0;
             y = 0;
             RectTransform rect = desktopImage.rectTransform;
             Vector2 local;
             Camera camera = ResolveUiCamera();
-            if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(rect, Input.mousePosition, camera, out local))
+            if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(rect, screenPosition, camera, out local))
             {
-                return TryGetDesktopPointerFromScreenBounds(out x, out y);
+                return TryGetDesktopPointerFromScreenBounds(screenPosition, out x, out y);
             }
 
             Rect bounds = rect.rect;
@@ -612,7 +769,7 @@ namespace YlvaOS
             float localY = bounds.yMax - local.y;
             if (localX < 0f || localX > bounds.width || localY < 0f || localY > bounds.height)
             {
-                return TryGetDesktopPointerFromScreenBounds(out x, out y);
+                return TryGetDesktopPointerFromScreenBounds(screenPosition, out x, out y);
             }
 
             x = Mathf.Clamp(Mathf.RoundToInt(localX / Mathf.Max(1f, bounds.width) * desktopTextureWidth), 0, desktopTextureWidth - 1);
@@ -621,6 +778,11 @@ namespace YlvaOS
         }
 
         private bool TryGetDesktopPointerFromScreenBounds(out int x, out int y)
+        {
+            return TryGetDesktopPointerFromScreenBounds(Input.mousePosition, out x, out y);
+        }
+
+        private bool TryGetDesktopPointerFromScreenBounds(Vector2 screenPosition, out int x, out int y)
         {
             x = 0;
             y = 0;
@@ -642,7 +804,7 @@ namespace YlvaOS
                 max = Vector2.Max(max, point);
             }
 
-            Vector3 mouse = Input.mousePosition;
+            Vector2 mouse = screenPosition;
             if (mouse.x < min.x || mouse.x > max.x || mouse.y < min.y || mouse.y > max.y)
             {
                 return false;
@@ -653,6 +815,247 @@ namespace YlvaOS
             x = Mathf.Clamp(Mathf.RoundToInt((mouse.x - min.x) / width * desktopTextureWidth), 0, desktopTextureWidth - 1);
             y = Mathf.Clamp(Mathf.RoundToInt((max.y - mouse.y) / height * desktopTextureHeight), 0, desktopTextureHeight - 1);
             return true;
+        }
+
+        private void UpdateHostCursorSuppression()
+        {
+            bool shouldSuppress = machine != null && machine.IsDesktopMode && IsDesktopPointerInside();
+            SetHostCursorSuppressed(shouldSuppress);
+            if (shouldSuppress)
+            {
+                ConsumeDesktopHostInput();
+            }
+        }
+
+        private bool IsDesktopPointerInside()
+        {
+            int x;
+            int y;
+            return desktopImage != null && desktopTextureWidth > 0 && desktopTextureHeight > 0 && TryGetDesktopPointer(out x, out y);
+        }
+
+        private void SetHostCursorSuppressed(bool suppressed)
+        {
+            try
+            {
+                if (suppressed)
+                {
+                    if (!hostCursorSuppressed)
+                    {
+                        previousCursorVisible = Cursor.visible;
+                        CaptureCursorSystemState();
+                    }
+
+                    Cursor.visible = false;
+                    SetElinCursorSystemDisabled(true);
+                }
+                else
+                {
+                    if (hostCursorSuppressed)
+                    {
+                        Cursor.visible = previousCursorVisible;
+                        SetElinCursorSystemDisabled(previousCursorSystemDisabled);
+                        cursorSystemSuppressionCaptured = false;
+                    }
+                }
+
+                hostCursorSuppressed = suppressed;
+            }
+            catch
+            {
+                hostCursorSuppressed = false;
+            }
+        }
+
+        private void CaptureCursorSystemState()
+        {
+            if (cursorSystemSuppressionCaptured)
+            {
+                return;
+            }
+
+            try
+            {
+                if (CursorSystem.Instance != null)
+                {
+                    previousCursorSystemDisabled = CursorSystem.Instance.disable;
+                    cursorSystemSuppressionCaptured = true;
+                }
+            }
+            catch
+            {
+                cursorSystemSuppressionCaptured = false;
+            }
+        }
+
+        private static void SetElinCursorSystemDisabled(bool disabled)
+        {
+            try
+            {
+                if (CursorSystem.Instance != null)
+                {
+                    CursorSystem.Instance.disable = disabled;
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        private static void ConsumeDesktopHostInput()
+        {
+            try
+            {
+                EInput.Consume(consumeAxis: true, _skipFrame: 3);
+                if (EInput.leftMouse != null)
+                {
+                    EInput.leftMouse.Consume();
+                }
+
+                if (EInput.rightMouse != null)
+                {
+                    EInput.rightMouse.Consume();
+                }
+
+                if (EInput.middleMouse != null)
+                {
+                    EInput.middleMouse.Consume();
+                }
+
+                EInput.ConsumeWheel();
+            }
+            catch
+            {
+            }
+        }
+
+        private void RestoreHostCursor()
+        {
+            SetHostCursorSuppressed(false);
+        }
+
+        private void HandleDesktopPointerEvent(PointerEventData eventData, bool down)
+        {
+            if (eventData == null || machine == null || !machine.IsDesktopMode)
+            {
+                return;
+            }
+
+            int bit = ToDesktopButtonMask(eventData.button);
+            if (bit == 0)
+            {
+                return;
+            }
+
+            int x;
+            int y;
+            if (!TryGetDesktopPointer(eventData.position, out x, out y))
+            {
+                return;
+            }
+
+            desktopPointerInside = true;
+            int mask = lastDesktopButtonMask < 0 ? 0 : lastDesktopButtonMask;
+            mask = down ? mask | bit : mask & ~bit;
+            if (!down)
+            {
+                if (bit == 1)
+                {
+                    leftButtonHoldUntil = 0f;
+                }
+                else if (bit == 2)
+                {
+                    middleButtonHoldUntil = 0f;
+                }
+                else if (bit == 4)
+                {
+                    rightButtonHoldUntil = 0f;
+                }
+            }
+
+            SendDesktopPointerState(x, y, mask, force: true);
+            ConsumeDesktopHostInput();
+        }
+
+        private void HandleDesktopPointerMove(PointerEventData eventData)
+        {
+            if (eventData == null || machine == null || !machine.IsDesktopMode)
+            {
+                return;
+            }
+
+            int x;
+            int y;
+            if (!TryGetDesktopPointer(eventData.position, out x, out y))
+            {
+                return;
+            }
+
+            desktopPointerInside = true;
+            int mask = lastDesktopButtonMask < 0 ? 0 : lastDesktopButtonMask;
+            SendDesktopPointerState(x, y, mask, force: false);
+            ConsumeDesktopHostInput();
+        }
+
+        private void HandleDesktopScroll(PointerEventData eventData)
+        {
+            if (eventData == null || machine == null || !machine.IsDesktopMode)
+            {
+                return;
+            }
+
+            int x;
+            int y;
+            if (!TryGetDesktopPointer(eventData.position, out x, out y))
+            {
+                return;
+            }
+
+            desktopPointerInside = true;
+            int mask = lastDesktopButtonMask < 0 ? 0 : lastDesktopButtonMask;
+            if (eventData.scrollDelta.y > 0.01f)
+            {
+                SendDesktopPointerState(x, y, mask | 8, force: true);
+                SendDesktopPointerState(x, y, mask, force: true);
+            }
+            else if (eventData.scrollDelta.y < -0.01f)
+            {
+                SendDesktopPointerState(x, y, mask | 16, force: true);
+                SendDesktopPointerState(x, y, mask, force: true);
+            }
+
+            ConsumeDesktopHostInput();
+        }
+
+        private void SetDesktopPointerInside(bool inside)
+        {
+            desktopPointerInside = inside;
+            if (!inside && lastDesktopButtonMask > 0 && lastDesktopMouseX >= 0 && lastDesktopMouseY >= 0)
+            {
+                SendDesktopPointerState(lastDesktopMouseX, lastDesktopMouseY, 0, force: true);
+            }
+
+            if (!inside)
+            {
+                ClearDesktopClickAnchor();
+            }
+
+            UpdateHostCursorSuppression();
+        }
+
+        private static int ToDesktopButtonMask(PointerEventData.InputButton button)
+        {
+            switch (button)
+            {
+                case PointerEventData.InputButton.Left:
+                    return 1;
+                case PointerEventData.InputButton.Middle:
+                    return 2;
+                case PointerEventData.InputButton.Right:
+                    return 4;
+                default:
+                    return 0;
+            }
         }
 
         private Camera ResolveUiCamera()
@@ -1071,6 +1474,9 @@ namespace YlvaOS
             Stretch(desktopRect, 18f, 58f, 18f, 22f);
             desktopImage = desktopRect.gameObject.AddComponent<RawImage>();
             desktopImage.color = Color.white;
+            desktopImage.raycastTarget = true;
+            DesktopInputBlocker inputBlocker = desktopRect.gameObject.AddComponent<DesktopInputBlocker>();
+            inputBlocker.Configure(this);
             desktopImage.gameObject.SetActive(false);
 
             promptText = CreateText("Prompt", window, 16, TextAnchor.MiddleLeft, new Color(0.90f, 1f, 0.92f, 1f));
@@ -1238,6 +1644,119 @@ namespace YlvaOS
             }
 
             return false;
+        }
+
+        private sealed class DesktopInputBlocker :
+            MonoBehaviour,
+            IPointerEnterHandler,
+            IPointerExitHandler,
+            IPointerDownHandler,
+            IPointerUpHandler,
+            IPointerClickHandler,
+            IBeginDragHandler,
+            IDragHandler,
+            IEndDragHandler,
+            IScrollHandler
+        {
+            private LayerYlvaOs owner;
+
+            public void Configure(LayerYlvaOs owner)
+            {
+                this.owner = owner;
+            }
+
+            public void OnPointerEnter(PointerEventData eventData)
+            {
+                if (owner != null)
+                {
+                    owner.SetDesktopPointerInside(true);
+                }
+
+                Use(eventData);
+            }
+
+            public void OnPointerExit(PointerEventData eventData)
+            {
+                if (owner != null)
+                {
+                    owner.SetDesktopPointerInside(false);
+                }
+
+                Use(eventData);
+            }
+
+            public void OnPointerDown(PointerEventData eventData)
+            {
+                if (owner != null)
+                {
+                    owner.HandleDesktopPointerEvent(eventData, down: true);
+                }
+
+                Use(eventData);
+            }
+
+            public void OnPointerUp(PointerEventData eventData)
+            {
+                if (owner != null)
+                {
+                    owner.HandleDesktopPointerEvent(eventData, down: false);
+                }
+
+                Use(eventData);
+            }
+
+            public void OnPointerClick(PointerEventData eventData)
+            {
+                Use(eventData);
+            }
+
+            public void OnBeginDrag(PointerEventData eventData)
+            {
+                if (owner != null)
+                {
+                    owner.HandleDesktopPointerMove(eventData);
+                }
+
+                Use(eventData);
+            }
+
+            public void OnDrag(PointerEventData eventData)
+            {
+                if (owner != null)
+                {
+                    owner.HandleDesktopPointerMove(eventData);
+                }
+
+                Use(eventData);
+            }
+
+            public void OnEndDrag(PointerEventData eventData)
+            {
+                if (owner != null)
+                {
+                    owner.HandleDesktopPointerMove(eventData);
+                }
+
+                Use(eventData);
+            }
+
+            public void OnScroll(PointerEventData eventData)
+            {
+                if (owner != null)
+                {
+                    owner.HandleDesktopScroll(eventData);
+                }
+
+                Use(eventData);
+            }
+
+            private static void Use(PointerEventData eventData)
+            {
+                if (eventData != null)
+                {
+                    eventData.Use();
+                }
+            }
         }
 
         private struct DesktopKeyBinding

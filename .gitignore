@@ -20,6 +20,10 @@
 # Local Elona test copy; users must provide their own Elona files.
 /Docs/elona/
 
+# Private design notes; keep Markdown docs local-only.
+/Docs/*.md
+/Docs/**/*.md
+
 # Python cache
 __pycache__/
 *.py[cod]
