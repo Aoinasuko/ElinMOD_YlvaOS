@@ -32,7 +32,7 @@ ALPINE_REPO_MAIN = f"https://dl-cdn.alpinelinux.org/alpine/{ALPINE_BRANCH}/main"
 ALPINE_REPO_COMMUNITY = f"https://dl-cdn.alpinelinux.org/alpine/{ALPINE_BRANCH}/community"
 ALPINE_ISO_URL = f"{ALPINE_RELEASE_BASE}/{ALPINE_ISO}"
 ALPINE_ISO_SHA256 = "e73a6241bd5f3c5c2d4d38c02cc52c378c0415a7c888bd292066bf36e0f41a39"
-YLVAOS_VERSION = "0.01"
+YLVAOS_VERSION = "0.02"
 
 DEFAULT_DISK_MIB = 16384
 INSTALL_TIMEOUT_SECONDS = 1800
@@ -223,6 +223,8 @@ def install_script() -> str:
             "doas",
             "less",
             "shadow",
+            "linux-firmware-none",
+            "linux-lts",
             "ca-certificates",
             "musl-locales",
             "musl-locales-lang",
@@ -342,12 +344,20 @@ auto lo
 iface lo inet loopback
 EOF
 
+cat >/mnt/etc/modules <<'EOF'
+snd-seq
+snd-rawmidi
+EOF
+
 mkdir -p /mnt/home/ylva /mnt/etc/doas.d /mnt/etc/profile.d
 sed -i 's/^root:[^:]*:/root::/' /mnt/etc/shadow
 if grep -q '^wheel:' /mnt/etc/group; then
     sed -i 's/^wheel:.*/wheel:x:10:root/' /mnt/etc/group
 else
     echo 'wheel:x:10:root' >>/mnt/etc/group
+fi
+if ! grep -q '^audio:' /mnt/etc/group; then
+    echo 'audio:x:18:' >>/mnt/etc/group
 fi
 echo 'permit nopass :wheel' >/mnt/etc/doas.d/doas.conf
 chmod 0600 /mnt/etc/doas.d/doas.conf
@@ -423,6 +433,7 @@ if ! id "$user" >/dev/null 2>&1; then
 fi
 
 addgroup "$user" wheel >/dev/null 2>&1 || true
+addgroup "$user" audio >/dev/null 2>&1 || true
 mkdir -p "/home/$user"
 chown "$user:$user" "/home/$user" >/dev/null 2>&1 || true
 
@@ -481,7 +492,6 @@ fi
 mkdir -p "$XDG_RUNTIME_DIR" "$XDG_RUNTIME_DIR/pulse" 2>/dev/null || true
 chmod 700 "$XDG_RUNTIME_DIR" 2>/dev/null || true
 export PULSE_SERVER="${PULSE_SERVER:-unix:$XDG_RUNTIME_DIR/pulse/native}"
-export ALSA_CONFIG_PATH=/etc/asound.conf
 export PULSE_PROP="media.role=game"
 EOF
 
@@ -748,7 +758,6 @@ runtime="${XDG_RUNTIME_DIR:-/tmp/ylva-runtime-$user}"
 port=/dev/virtio-ports/org.ylvaos.audio
 export XDG_RUNTIME_DIR="$runtime"
 export PULSE_SERVER="${PULSE_SERVER:-unix:$runtime/pulse/native}"
-export ALSA_CONFIG_PATH="${ALSA_CONFIG_PATH:-/etc/asound.conf}"
 
 mkdir -p "$runtime" "$runtime/pulse" 2>/dev/null || true
 chmod 700 "$runtime" 2>/dev/null || true
@@ -783,7 +792,6 @@ user="$(id -un 2>/dev/null || printf ylva)"
 runtime="${XDG_RUNTIME_DIR:-/tmp/ylva-runtime-$user}"
 export XDG_RUNTIME_DIR="$runtime"
 export PULSE_SERVER="unix:$runtime/pulse/native"
-export ALSA_CONFIG_PATH=/etc/asound.conf
 
 mkdir -p "$runtime" "$runtime/pulse"
 chmod 700 "$runtime" 2>/dev/null || true
@@ -826,12 +834,39 @@ if [ ! -f "$soundfont" ]; then
     soundfont="$(find /usr/share -iname '*.sf2' 2>/dev/null | head -n 1)"
 fi
 
-if [ -n "$soundfont" ] && [ -f "$soundfont" ] && ! pgrep -u "$(id -u)" fluidsynth >/dev/null 2>&1; then
-    modprobe snd-seq >/dev/null 2>&1 || true
-    modprobe snd-seq-midi >/dev/null 2>&1 || true
-    modprobe snd-rawmidi >/dev/null 2>&1 || true
-    fluidsynth -i -a pulseaudio -m alsa_seq -o audio.period-size=1024 -o audio.periods=3 "$soundfont" >/tmp/ylva-fluidsynth.log 2>&1 &
+load_alsa_sequencer() {
+    if [ "$(id -u)" -eq 0 ]; then
+        modprobe snd-seq >>/tmp/ylva-audio-modprobe.log 2>&1 || true
+        modprobe snd-seq-midi >>/tmp/ylva-audio-modprobe.log 2>&1 || true
+        modprobe snd-rawmidi >>/tmp/ylva-audio-modprobe.log 2>&1 || true
+        modprobe snd-timer >>/tmp/ylva-audio-modprobe.log 2>&1 || true
+    else
+        doas modprobe snd-seq >>/tmp/ylva-audio-modprobe.log 2>&1 || true
+        doas modprobe snd-seq-midi >>/tmp/ylva-audio-modprobe.log 2>&1 || true
+        doas modprobe snd-rawmidi >>/tmp/ylva-audio-modprobe.log 2>&1 || true
+        doas modprobe snd-timer >>/tmp/ylva-audio-modprobe.log 2>&1 || true
+    fi
+    if [ -e /dev/snd/seq ]; then
+        chmod 0666 /dev/snd/seq /dev/snd/timer >/dev/null 2>&1 || true
+    fi
+}
+
+if pgrep -u "$(id -u)" fluidsynth >/dev/null 2>&1 && ! aplaymidi -l 2>/dev/null | grep -q 'FLUID Synth'; then
+    pkill -u "$(id -u)" fluidsynth >/dev/null 2>&1 || true
+    sleep 1
 fi
+
+if [ -n "$soundfont" ] && [ -f "$soundfont" ] && ! pgrep -u "$(id -u)" fluidsynth >/dev/null 2>&1; then
+    load_alsa_sequencer
+    fluidsynth -s -i -a pulseaudio -m alsa_seq -o midi.autoconnect=1 -o audio.period-size=2048 -o audio.periods=4 "$soundfont" >/tmp/ylva-fluidsynth.log 2>&1 &
+fi
+
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+    if aplaymidi -l 2>/dev/null | grep -q 'FLUID Synth'; then
+        break
+    fi
+    sleep 1
+done
 EOF
 chmod 0755 /mnt/usr/bin/ylva-start-audio
 
@@ -860,7 +895,6 @@ fi
 mkdir -p "$XDG_RUNTIME_DIR" "$XDG_RUNTIME_DIR/pulse" 2>/dev/null || true
 chmod 700 "$XDG_RUNTIME_DIR" 2>/dev/null || true
 export PULSE_SERVER="${PULSE_SERVER:-unix:$XDG_RUNTIME_DIR/pulse/native}"
-export ALSA_CONFIG_PATH="${ALSA_CONFIG_PATH:-/etc/asound.conf}"
 EOF
 
 cat >/mnt/usr/lib/ylvaos/setup-audio <<'EOF'
@@ -869,12 +903,26 @@ set -u
 . /usr/lib/ylvaos/wine-env
 
 ylva-start-audio >/tmp/ylva-audio.log 2>&1 || true
+sink_ready=0
+midi_ready=0
 if pactl list short sinks 2>/dev/null | awk '{print $2}' | grep -qx ylva; then
-    echo "YlvaOS audio sink is ready."
+    sink_ready=1
+fi
+if aplaymidi -l 2>/dev/null | grep -q 'FLUID Synth'; then
+    midi_ready=1
+fi
+
+if [ "$sink_ready" -eq 1 ] && [ "$midi_ready" -eq 1 ]; then
+    echo "YlvaOS audio sink and MIDI synthesizer are ready."
     exit 0
 fi
 
-echo "YlvaOS audio sink did not become ready. See /tmp/ylva-audio.log and /tmp/ylva-null-sink.log."
+if [ "$sink_ready" -ne 1 ]; then
+    echo "YlvaOS audio sink did not become ready. See /tmp/ylva-audio.log and /tmp/ylva-null-sink.log."
+fi
+if [ "$midi_ready" -ne 1 ]; then
+    echo "YlvaOS MIDI synthesizer did not become ready. See /tmp/ylva-fluidsynth.log and /tmp/ylva-audio-modprobe.log."
+fi
 exit 1
 EOF
 chmod 0755 /mnt/usr/lib/ylvaos/setup-audio
@@ -902,7 +950,7 @@ cat >/mnt/usr/lib/ylvaos/setup-wine <<'EOF'
 set -u
 . /usr/lib/ylvaos/wine-env
 
-marker="$WINEPREFIX/.ylvaos-jp-wine-v4"
+marker="$WINEPREFIX/.ylvaos-jp-wine-v5"
 if [ -f "$marker" ]; then
     echo "Wine prefix is ready at $WINEPREFIX."
     exit 0
@@ -912,7 +960,7 @@ mkdir -p "$WINEPREFIX"
 /usr/lib/ylvaos/setup-audio >/tmp/ylva-audio.log 2>&1 || true
 wineboot -u >/tmp/ylva-wineboot.log 2>&1 || true
 
-wine reg add 'HKCU\\Software\\Wine\\Drivers' /v Audio /d pulse /f >/dev/null 2>&1 || true
+wine reg add 'HKCU\\Software\\Wine\\Drivers' /v Audio /d alsa /f >/dev/null 2>&1 || true
 wine reg add 'HKCU\\Control Panel\\International' /v LocaleName /d ja-JP /f >/dev/null 2>&1 || true
 wine reg add 'HKCU\\Control Panel\\International' /v sCountry /d Japan /f >/dev/null 2>&1 || true
 wine reg add 'HKCU\\Control Panel\\International' /v sLanguage /d JPN /f >/dev/null 2>&1 || true
@@ -1345,12 +1393,6 @@ cat >"$home/.config/openbox/rc.xml" <<'EOF_OBRC'
         <action name="Raise"/>
       </mousebind>
     </context>
-    <context name="Client">
-      <mousebind button="Left" action="Press">
-        <action name="Focus"/>
-        <action name="Raise"/>
-      </mousebind>
-    </context>
     <context name="Titlebar">
       <mousebind button="Left" action="Press">
         <action name="Focus"/>
@@ -1742,6 +1784,7 @@ etc/fonts/local.conf
 etc/hostname
 etc/issue
 etc/local.d/ylva-audio.start
+etc/modules
 etc/motd
 etc/os-release
 etc/profile.d/ylvaos-audio.sh
@@ -1781,7 +1824,14 @@ usr/sbin/ylva-start-desktop
 usr/sbin/ylva-stop-desktop
 EOF
 
-tar -czf /tmp/ylvaos-rootfs-overlay.tar.gz -C /mnt $(cat /mnt/usr/lib/ylvaos/managed-files)
+cp /mnt/usr/lib/ylvaos/managed-files /tmp/ylvaos-managed-files
+find /mnt/lib/modules -type f \( -path '*/kernel/sound/*' -o -name 'modules.alias*' -o -name 'modules.builtin*' -o -name 'modules.dep*' -o -name 'modules.devname' -o -name 'modules.order' -o -name 'modules.softdep' -o -name 'modules.symbols*' -o -name 'modules.weakdep' \) 2>/dev/null |
+    sed 's#^/mnt/##' >>/tmp/ylvaos-managed-files
+find /mnt/boot -maxdepth 1 -type f \( -name 'vmlinuz-*' -o -name 'initramfs-*' -o -name 'config-*' -o -name 'System.map-*' \) 2>/dev/null |
+    sed 's#^/mnt/##' >>/tmp/ylvaos-managed-files
+sort -u /tmp/ylvaos-managed-files >/tmp/ylvaos-managed-files.sorted
+cp /tmp/ylvaos-managed-files.sorted /mnt/usr/lib/ylvaos/managed-files
+tar -czf /tmp/ylvaos-rootfs-overlay.tar.gz -C /mnt -T /tmp/ylvaos-managed-files.sorted
 
 cat >/tmp/ylvaos-update.sh <<'EOF'
 #!/bin/sh
@@ -1828,6 +1878,21 @@ export_update_payload() {
                 cp /tmp/ylvaos-rootfs-overlay.tar.gz "$export_mount/rootfs-overlay.tar.gz"
                 cp /mnt/etc/ylvaos-release "$export_mount/ylvaos-release"
                 cp /tmp/ylvaos-update.sh "$export_mount/update.sh"
+                kernel_asset="$(find /mnt/boot -maxdepth 1 -type f \( -name 'vmlinuz-lts' -o -name 'vmlinuz-*-lts' \) 2>/dev/null | head -n 1)"
+                initrd_asset="$(find /mnt/boot -maxdepth 1 -type f \( -name 'initramfs-lts' -o -name 'initramfs-*-lts' \) 2>/dev/null | head -n 1)"
+                if [ -z "$kernel_asset" ]; then
+                    kernel_asset="$(find /mnt/boot -maxdepth 1 -type f -name 'vmlinuz-*' 2>/dev/null | head -n 1)"
+                fi
+                if [ -z "$initrd_asset" ]; then
+                    initrd_asset="$(find /mnt/boot -maxdepth 1 -type f -name 'initramfs-*' 2>/dev/null | head -n 1)"
+                fi
+                if [ -z "$kernel_asset" ] || [ -z "$initrd_asset" ]; then
+                    echo __YLVA_BOOT_ASSET_EXPORT_FAILED__
+                    umount "$export_mount" >/dev/null 2>&1 || true
+                    return 1
+                fi
+                cp "$kernel_asset" "$export_mount/vmlinuz"
+                cp "$initrd_asset" "$export_mount/initrd.img"
                 printf 'YlvaOS MOD update source\n' >"$export_mount/YLVAOS_UPDATE_SOURCE"
                 sync
                 umount "$export_mount"
@@ -1886,7 +1951,9 @@ def prepare_update_export(build_dir: Path) -> Path:
 
 def publish_update_payload(root: Path, export_dir: Path) -> None:
     update_dir = root / "Mod_YlvaOS" / "vm" / "update"
+    assets_dir = root / "Mod_YlvaOS" / "vm" / "assets"
     update_dir.mkdir(parents=True, exist_ok=True)
+    assets_dir.mkdir(parents=True, exist_ok=True)
     for child in update_dir.iterdir():
         if child.is_dir():
             shutil.rmtree(child)
@@ -1904,7 +1971,19 @@ def publish_update_payload(root: Path, export_dir: Path) -> None:
         if not source.exists():
             raise RuntimeError(f"YlvaOS update payload was not exported: missing {source}")
         shutil.copyfile(source, update_dir / name)
+
+    boot_assets = {
+        "vmlinuz": assets_dir / "vmlinuz",
+        "initrd.img": assets_dir / "initrd.img",
+    }
+    for name, destination in boot_assets.items():
+        source = export_dir / name
+        if not source.exists():
+            raise RuntimeError(f"YlvaOS boot asset was not exported: missing {source}")
+        shutil.copyfile(source, destination)
+
     print(f"Wrote {update_dir}")
+    print(f"Wrote {assets_dir}")
 
 
 def mount_install_seed(console: QemuConsole, prompt: str) -> None:

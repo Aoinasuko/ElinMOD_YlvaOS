@@ -35,12 +35,16 @@ cairo-1.18.4-r1 - A vector graphics library
 cairo-gobject-1.18.4-r1 - A vector graphics library (gobject bindings)
 cdparanoia-libs-10.2-r14 - Libraries for libcdda_paranoia (Paranoia III)
 cfdisk-2.42.1-r0 - Curses based partition table manipulator from util-linux
+cryptsetup-libs-2.8.6-r0 - Cryptsetup shared library
 cups-libs-2.4.19-r0 - CUPS libraries
 dbus-1.16.2-r2 - Freedesktop.org message bus system
 dbus-daemon-launch-helper-1.16.2-r2 - DBus SUID launch helper for autospawning
 dbus-libs-1.16.2-r2 - D-BUS access libraries
 dbus-openrc-1.16.2-r2 - Freedesktop.org message bus system (OpenRC init scripts)
 dbus-x11-1.16.2-r2 - X11 add-ons for D-BUS
+device-mapper-2.03.35-r3 - Device mapper userspace library and tools from LVM2
+device-mapper-libs-2.03.35-r3 - Device-mapper shared library
+device-mapper-udev-2.03.35-r3 - Device mapper udev rules
 dialog-1.3.20260107-r1 - Script interpreter providing curses widgets
 dmesg-2.42.1-r0 - dmesg tool from util-linux
 doas-6.8.2-r8 - OpenBSD's temporary privilege escalation tool
@@ -86,9 +90,12 @@ hwdata-pci-0.408-r0 - Hardware identification and configuration data (pci data)
 ifupdown-ng-0.13.0-r0 - tools for managing network configuration
 imlib2-1.12.6-r0 - Image manipulation library
 jack-1.9.22-r4 - The Jack Audio Connection Kit
+json-c-0.18-r1 - A JSON implementation in C
+kmod-34.2-r1 - Linux kernel module management utilities
 kmod-libs-34.2-r1 - Linux kernel module management utilities (libraries)
 lame-libs-3.100-r5 - An MP3 encoder and graphical frame analyzer (libraries)
 lcms2-2.19-r0 - Color Management Engine
+lddtree-1.27-r0 - List dynamic dependencies as a tree
 less-702-r0 - File pager
 libapk-3.0.8-r0 - Alpine Package Keeper - package manager for alpine
 libasyncns-0.8-r5 - Asynchronous Name Service Library
@@ -196,6 +203,8 @@ libxtst-1.2.5-r0 - X11 Testing -- Resource extension library
 libxv-1.0.13-r0 - X11 Video extension library
 libxxf86vm-1.1.7-r0 - X11 XFree86 video mode extension library
 libyuv-0.0.1928-r0 - Library for YUV scaling
+linux-firmware-none-20260519-r0 - Empty linux firwmare package for those who does not need any firmware
+linux-lts-6.18.48-r0 - Linux lts kernel
 linux-pam-1.7.1-r2 - Linux PAM (Pluggable Authentication Modules for Linux)
 llvm22-libs-22.1.3-r0 - LLVM 22 runtime library
 logger-2.42.1-r0 - Logger from util-linux
@@ -213,6 +222,7 @@ mesa-gbm-26.1.6-r0 - Mesa gbm library
 mesa-gl-26.1.6-r0 - Mesa libGL runtime libraries
 mesa-gles-26.1.6-r0 - Mesa libGLESv2 runtime libraries
 mkfontscale-1.2.4-r0 - Scalable font index generator for X
+mkinitfs-3.14.0-r0 - Tool to generate initramfs images for Alpine
 mount-2.42.1-r0 - mount tool from util-linux
 mpg123-libs-1.33.5-r0 - Console-based MPEG Audio Player for Layers 1, 2 and 3 (libraries)
 mtdev-1.1.7-r0 - Multitouch Protocol Translation Library Development Package

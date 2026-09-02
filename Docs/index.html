@@ -238,7 +238,7 @@
  ^           Ylva OS
 (  * *)   by aoi_nasuko
 -----------------------------
-Alpine Linux 3.24.1 base / YlvaOS 0.01</pre>
+Alpine Linux 3.24.1 base / YlvaOS 0.02</pre>
     </div>
     <nav class="wrap" aria-label="ページ内ナビゲーション">
       <a href="#start">はじめる</a>
@@ -347,9 +347,12 @@ Alpine Linux 3.24.1 base / YlvaOS 0.01</pre>
       <pre>C:\Users\&lt;ユーザー名&gt;\AppData\LocalLow\Lafrontier\Elin\YlvaOS\Import\elona</pre>
       <p>YlvaOS内でコピーする例:</p>
       <pre>mkdir -p ~/Import
-dev=/dev/vdb1
-[ -b "$dev" ] || dev=/dev/vdb
-doas mount -t vfat -o ro,uid=$(id -u),gid=$(id -g) "$dev" ~/Import
+for dev in /dev/vdb1 /dev/vdb /dev/vdc1 /dev/vdc /dev/vdd1 /dev/vdd /dev/sda1 /dev/sda /dev/sdb1 /dev/sdb; do
+  [ -b "$dev" ] || continue
+  doas mount -t vfat -o ro,uid=$(id -u),gid=$(id -g),utf8=1 "$dev" ~/Import || continue
+  [ -d ~/Import/elona ] && break
+  doas umount ~/Import
+done
 cp -r ~/Import/elona ~/Elona
 doas umount ~/Import</pre>
       <p>デスクトップへ入り、Wineを初期化してからElonaのフォルダで起動します。</p>
@@ -396,7 +399,7 @@ doas apk add &lt;package&gt;</pre>
   </main>
 
   <footer class="wrap">
-    YlvaOS 0.01 / Elin MOD by aoi_nasuko
+    YlvaOS 0.02 / Elin MOD by aoi_nasuko
   </footer>
 </body>
 </html>

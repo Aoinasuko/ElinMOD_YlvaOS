@@ -615,8 +615,8 @@ def wait_for_new(console: Console, needle: str, start_index: int, timeout: int) 
 
 
 def run_command(console: Console, command: str, prompt: str, timeout: int = 60) -> None:
-    start = console_length(console)
     time.sleep(0.5)
+    start = console_length(console)
     console.send(command)
     wait_for_new(console, prompt, start, timeout)
 
@@ -624,13 +624,17 @@ def run_command(console: Console, command: str, prompt: str, timeout: int = 60) 
 def mount_import_command(inner: str) -> str:
     return (
         "mkdir -p ~/Import; "
-        "dev=/dev/vdb1; "
-        "[ -b \"$dev\" ] || dev=/dev/vdb; "
-        "[ -b \"$dev\" ] || dev=/dev/sda1; "
-        "[ -b \"$dev\" ] || dev=/dev/sda; "
-        "doas mount -t vfat -o ro,uid=$(id -u),gid=$(id -g) \"$dev\" ~/Import; "
+        "import_mounted=0; "
+        "for dev in /dev/vdb1 /dev/vdb /dev/vdc1 /dev/vdc /dev/vdd1 /dev/vdd /dev/sda1 /dev/sda /dev/sdb1 /dev/sdb /dev/sdc1 /dev/sdc; do "
+        "[ -b \"$dev\" ] || continue; "
+        "if doas mount -t vfat -o ro,uid=$(id -u),gid=$(id -g),utf8=1 \"$dev\" ~/Import >/tmp/ylva-import-mount.log 2>&1; then "
+        "if [ -f ~/Import/ylva-import-test.txt ] || [ -d ~/Import/elona ]; then import_mounted=1; break; fi; "
+        "doas umount ~/Import >/dev/null 2>&1 || true; "
+        "fi; "
+        "done; "
+        "if [ \"$import_mounted\" -eq 1 ]; then "
         + inner
-        + "; doas umount ~/Import"
+        + "; doas umount ~/Import; else cat /tmp/ylva-import-mount.log 2>/dev/null || true; printf '\\137\\137YLVA_IMPORT_NOT_FOUND\\137\\137\\n'; fi"
     )
 
 
@@ -776,7 +780,7 @@ def main() -> int:
         qmp.connect()
         console.wait_for_any(["YlvaOS:~$"], 180)
         snapshot = console_snapshot(console)
-        if "^           Ylva OS" not in snapshot or "(  * *)   by aoi_nasuko" not in snapshot or "Alpine Linux 3.24.1 base / YlvaOS 0.01" not in snapshot:
+        if "^           Ylva OS" not in snapshot or "(  * *)   by aoi_nasuko" not in snapshot or "Alpine Linux 3.24.1 base / YlvaOS 0.02" not in snapshot:
             raise RuntimeError("YlvaOS login splash was not printed")
         width, height = probe.read_framebuffer_size()
         print(f"[vnc] framebuffer {width}x{height}")
@@ -841,7 +845,7 @@ def main() -> int:
             "! command -v ylva-wine-init >/dev/null 2>&1 && "
             "! command -v Elona >/dev/null 2>&1 && "
             "! command -v elona >/dev/null 2>&1 && "
-            "echo __YLVA_COMMAND_LAYOUT_OK__",
+            "printf '\\137\\137YLVA_COMMAND_LAYOUT_OK\\137\\137\\n'",
             "YlvaOS:~$",
             60,
         )
@@ -868,7 +872,7 @@ def main() -> int:
             raise RuntimeError("YlvaOS command layout still exposes an old helper command")
         run_command(
             console,
-            "wine --version; YlvaOS setup audio; pactl list short sinks | awk '{print $2}' | grep -qx ylva && echo __YLVA_PULSE_SINK__",
+            "wine --version; YlvaOS setup audio; pactl list short sinks | awk '{print $2}' | grep -qx ylva && pgrep -u $(id -u) fluidsynth >/dev/null && aplaymidi -l | grep -q 'FLUID Synth' && printf '\\137\\137YLVA_PULSE_SINK\\137\\137\\n'",
             "YlvaOS:~$",
             90,
         )
@@ -877,12 +881,12 @@ def main() -> int:
             raise RuntimeError("Wine or the YlvaOS PulseAudio sink did not start")
         run_command(
             console,
-            "YlvaOS setup wine >/tmp/ylva-wine-setup.log 2>&1; wine reg query 'HKLM\\System\\CurrentControlSet\\Control\\Nls\\CodePage' /v ACP; fc-match 'MS Gothic'; echo __YLVA_WINE_CONFIGURED__",
+            "YlvaOS setup wine >/tmp/ylva-wine-setup.log 2>&1; wine reg query 'HKLM\\System\\CurrentControlSet\\Control\\Nls\\CodePage' /v ACP; wine reg query 'HKCU\\Software\\Wine\\Drivers' /v Audio; fc-match 'MS Gothic'; printf '\\137\\137YLVA_WINE_CONFIGURED\\137\\137\\n'",
             "YlvaOS:~$",
             240,
         )
         snapshot = console_snapshot(console)
-        if "__YLVA_WINE_CONFIGURED__" not in snapshot or "932" not in snapshot or "Noto Sans CJK JP" not in snapshot:
+        if "__YLVA_WINE_CONFIGURED__" not in snapshot or "932" not in snapshot or "alsa" not in snapshot or "Noto Sans CJK JP" not in snapshot:
             raise RuntimeError("Wine Japanese locale/font configuration did not complete")
         audio.reset_signal()
         run_command(
@@ -892,6 +896,14 @@ def main() -> int:
             30,
         )
         audio.wait_for_signal(1024, 30)
+        audio.reset_signal()
+        run_command(
+            console,
+            "printf '%s' 'TVRoZAAAAAYAAAABAGBNVHJrAAAAFgD/UQMHoSAAwAAAkDx/YIA8AAD/LwA=' | base64 -d >/tmp/ylva-midi-test.mid; port=$(aplaymidi -l | awk '/FLUID Synth/ { print $1; exit }'); test -n \"$port\" && timeout 8 aplaymidi -p \"$port\" /tmp/ylva-midi-test.mid >/tmp/ylva-midi-test.log 2>&1; cat /tmp/ylva-midi-test.log; printf '\\137\\137YLVA_MIDI_TEST_DONE\\137\\137\\n'",
+            "YlvaOS:~$",
+            30,
+        )
+        audio.wait_for_signal(128, 30)
         run_command(
             console,
             mount_import_command("cat ~/Import/ylva-import-test.txt"),
@@ -914,7 +926,7 @@ def main() -> int:
         run_command(console, "Desktop", "YlvaOS:~$", 90)
         control.wait_for("mode desktop-starting", 30)
         control.wait_for("mode desktop", 90)
-        run_command(console, "[ -S /tmp/.X11-unix/X0 ] && echo __YLVA_X_READY__ || (tail -n 80 /tmp/ylva-desktop.log; echo __YLVA_X_MISSING__)", "YlvaOS:~$", 60)
+        run_command(console, "[ -S /tmp/.X11-unix/X0 ] && printf '\\137\\137YLVA_X_READY\\137\\137\\n' || (tail -n 80 /tmp/ylva-desktop.log; printf '\\137\\137YLVA_X_MISSING\\137\\137\\n')", "YlvaOS:~$", 60)
         snapshot = console_snapshot(console)
         if "__YLVA_X_READY__" not in snapshot:
             raise RuntimeError("Xorg did not create /tmp/.X11-unix/X0")
@@ -926,28 +938,29 @@ def main() -> int:
             "grep -q 'action name=\"Iconify\"' ~/.config/openbox/rc.xml && "
             "grep -q 'context name=\"Maximize\"' ~/.config/openbox/rc.xml && "
             "grep -q 'action name=\"ToggleMaximize\"' ~/.config/openbox/rc.xml && "
-            "echo __YLVA_WINDOW_BUTTON_BINDS_OK__",
+            "! grep -q 'context name=\"Client\"' ~/.config/openbox/rc.xml && "
+            "printf '\\137\\137YLVA_WINDOW_BUTTON_BINDS_OK\\137\\137\\n'",
             "YlvaOS:~$",
             30,
         )
         snapshot = console_snapshot(console)
         if "__YLVA_WINDOW_BUTTON_BINDS_OK__" not in snapshot:
             raise RuntimeError("Openbox window button mouse bindings were not generated")
-        run_command(console, "DISPLAY=:0 xdotool search --name 'YlvaOS Terminal' | head -n 1 >/tmp/ylva-terminal-window; test -s /tmp/ylva-terminal-window && echo __YLVA_TERMINAL_VISIBLE__", "YlvaOS:~$", 30)
+        run_command(console, "DISPLAY=:0 xdotool search --name 'YlvaOS Terminal' | head -n 1 >/tmp/ylva-terminal-window; test -s /tmp/ylva-terminal-window && printf '\\137\\137YLVA_TERMINAL_VISIBLE\\137\\137\\n'", "YlvaOS:~$", 30)
         snapshot = console_snapshot(console)
         if "__YLVA_TERMINAL_VISIBLE__" not in snapshot:
             raise RuntimeError("Initial desktop terminal was not visible")
-        run_command(console, "DISPLAY=:0 Settings; sleep 2; DISPLAY=:0 xdotool search --name 'YlvaOS Settings' | head -n 1 >/tmp/ylva-settings-window; test -s /tmp/ylva-settings-window && echo __YLVA_SETTINGS_VISIBLE__", "YlvaOS:~$", 30)
+        run_command(console, "DISPLAY=:0 Settings; sleep 2; DISPLAY=:0 xdotool search --name 'YlvaOS Settings' | head -n 1 >/tmp/ylva-settings-window; test -s /tmp/ylva-settings-window && printf '\\137\\137YLVA_SETTINGS_VISIBLE\\137\\137\\n'", "YlvaOS:~$", 30)
         snapshot = console_snapshot(console)
         if "__YLVA_SETTINGS_VISIBLE__" not in snapshot:
             raise RuntimeError("YlvaOS Settings did not open on the desktop")
-        run_command(console, "DISPLAY=:0 Files; sleep 3; pgrep -fa '[p]cmanfm|[m]c' >/tmp/ylva-files-processes; test -s /tmp/ylva-files-processes && cat /tmp/ylva-files-processes && echo __YLVA_FILES_OPENED__", "YlvaOS:~$", 30)
+        run_command(console, "DISPLAY=:0 Files; sleep 3; pgrep -fa '[p]cmanfm|[m]c' >/tmp/ylva-files-processes; test -s /tmp/ylva-files-processes && cat /tmp/ylva-files-processes && printf '\\137\\137YLVA_FILES_OPENED\\137\\137\\n'", "YlvaOS:~$", 30)
         snapshot = console_snapshot(console)
         if "__YLVA_FILES_OPENED__" not in snapshot:
             raise RuntimeError("YlvaOS File Manager did not start")
         run_command(
             console,
-            "YlvaOS set desktop 800x600; YlvaOS set fps 20; echo __YLVA_DISPLAY_SETTINGS_SENT__",
+            "YlvaOS set desktop 800x600; YlvaOS set fps 20; printf '\\137\\137YLVA_DISPLAY_SETTINGS_SENT\\137\\137\\n'",
             "YlvaOS:~$",
             30,
         )
@@ -976,17 +989,17 @@ def main() -> int:
         snapshot = console_snapshot(console)
         if "__YLVA_HOST_PASTE_OK__" not in snapshot or "__YLVA_HOST_PASTE_BAD__" in snapshot:
             raise RuntimeError("Host clipboard paste was not injected exactly into the desktop terminal")
-        run_command(console, "DISPLAY=:0 xdotool search --name 'YlvaOS Terminal' windowkill >/dev/null 2>&1 || true; sleep 1; echo __YLVA_TERMINAL_CLOSED__", "YlvaOS:~$", 30)
+        run_command(console, "DISPLAY=:0 xdotool search --name 'YlvaOS Terminal' windowkill >/dev/null 2>&1 || true; sleep 1; printf '\\137\\137YLVA_TERMINAL_CLOSED\\137\\137\\n'", "YlvaOS:~$", 30)
         probe.hotkey([0xFFE3, 0xFFE9, ord("t")])
         time.sleep(2)
-        run_command(console, "DISPLAY=:0 xdotool search --name 'YlvaOS Terminal' | head -n 1 >/tmp/ylva-terminal-window; test -s /tmp/ylva-terminal-window && echo __YLVA_TERMINAL_REOPENED__", "YlvaOS:~$", 30)
+        run_command(console, "DISPLAY=:0 xdotool search --name 'YlvaOS Terminal' | head -n 1 >/tmp/ylva-terminal-window; test -s /tmp/ylva-terminal-window && printf '\\137\\137YLVA_TERMINAL_REOPENED\\137\\137\\n'", "YlvaOS:~$", 30)
         snapshot = console_snapshot(console)
         if "__YLVA_TERMINAL_REOPENED__" not in snapshot:
             raise RuntimeError("Ctrl+Alt+T did not reopen the desktop terminal")
         if args.elona_dir is not None:
             run_command(
                 console,
-                "DISPLAY=:0 sh -c '. /usr/lib/ylvaos/wine-env; YlvaOS setup wine >/tmp/ylva-wine-setup.log 2>&1 || true; cd ~/ElonaTest && wine elona.exe >/tmp/ylva-elona.log 2>&1 &' ; sleep 20; pgrep -fa '[e]lona.exe' >/tmp/ylva-elona-processes.txt; if [ -s /tmp/ylva-elona-processes.txt ]; then cat /tmp/ylva-elona-processes.txt; echo __YLVA_ELONA_STARTED__; else tail -n 80 /tmp/ylva-elona.log; echo __YLVA_ELONA_NOT_RUNNING__; fi; wineserver -k >/dev/null 2>&1 || true",
+                "DISPLAY=:0 sh -c '. /usr/lib/ylvaos/wine-env; YlvaOS setup wine >/tmp/ylva-wine-setup.log 2>&1 || true; cd ~/ElonaTest && wine elona.exe >/tmp/ylva-elona.log 2>&1 &' ; sleep 20; pgrep -fa '[e]lona.exe' >/tmp/ylva-elona-processes.txt; if [ -s /tmp/ylva-elona-processes.txt ]; then cat /tmp/ylva-elona-processes.txt; printf '\\137\\137YLVA_ELONA_STARTED\\137\\137\\n'; else tail -n 80 /tmp/ylva-elona.log; printf '\\137\\137YLVA_ELONA_NOT_RUNNING\\137\\137\\n'; fi; wineserver -k >/dev/null 2>&1 || true",
                 "YlvaOS:~$",
                 90,
             )
@@ -1007,7 +1020,7 @@ def main() -> int:
                 raise
         run_command(
             console,
-            "for i in 1 2 3 4 5; do [ ! -S /tmp/.X11-unix/X0 ] && echo __YLVA_X_STOPPED__ && break; sleep 1; done",
+            "for i in 1 2 3 4 5; do [ ! -S /tmp/.X11-unix/X0 ] && printf '\\137\\137YLVA_X_STOPPED\\137\\137\\n' && break; sleep 1; done",
             "YlvaOS:~$",
             30,
         )

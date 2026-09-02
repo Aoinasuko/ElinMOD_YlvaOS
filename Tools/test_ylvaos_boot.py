@@ -145,7 +145,7 @@ def main() -> int:
             return 1
         with console.lock:
             snapshot = console.text
-        if "^           Ylva OS" not in snapshot or "(  * *)   by aoi_nasuko" not in snapshot or "Alpine Linux 3.24.1 base / YlvaOS 0.01" not in snapshot:
+        if "^           Ylva OS" not in snapshot or "(  * *)   by aoi_nasuko" not in snapshot or "Alpine Linux 3.24.1 base / YlvaOS 0.02" not in snapshot:
             raise RuntimeError("YlvaOS login splash was not printed")
         time.sleep(1)
         console.send('echo __YLVA_USER__$(whoami)__END__')
