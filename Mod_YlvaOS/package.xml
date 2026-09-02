@@ -2,10 +2,10 @@
 <Meta>
   <title>Ylva OS</title>
   <id>bep_ylvaos</id>
-  <tags>General</tags>
   <author>aoi_nasuko</author>
-  <builtin>false</builtin>
   <loadPriority>99999999</loadPriority>
   <version>0.23.340</version>
+  <tags>General,Utility</tags>
   <description>Using a computer allows you to boot up the operating system that you can actually use.</description>
+  <builtin>false</builtin>
 </Meta>
