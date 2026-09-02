@@ -12,6 +12,16 @@ public sealed class TraitYlvaOS_Computer : TraitComputer
         return Open(c);
     }
 
+    public override void TrySetAct(ActPlan p)
+    {
+        if (p == null || owner == null || !owner.IsInstalled || !IsPlayer(p.cc))
+        {
+            return;
+        }
+
+        p.TrySetAct(LangUse, () => Open(p.cc), owner);
+    }
+
     private bool Open(Chara c)
     {
         if (!IsPlayer(c) || owner == null)

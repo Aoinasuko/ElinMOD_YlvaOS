@@ -11,8 +11,9 @@ namespace YlvaOS
         public const int SampleRate = 44100;
         public const int Channels = 2;
 
-        private const int BufferSeconds = 2;
-        private const int MaxLatencySamples = SampleRate * Channels / 2;
+        private const int BufferSeconds = 6;
+        private const int MaxLatencySamples = SampleRate * Channels * 2;
+        private const int StartLatencySamples = SampleRate * Channels / 5;
 
         private readonly ManualLogSource log;
         private readonly object bufferLock = new object();
@@ -22,6 +23,7 @@ namespace YlvaOS
         private int readIndex;
         private int writeIndex;
         private int bufferedSamples;
+        private bool playbackPrimed;
         private bool disposed;
 
         public YlvaAudioServer(ManualLogSource log)
@@ -53,13 +55,36 @@ namespace YlvaOS
             }
 
             int written = 0;
+            bool canRead = true;
             lock (bufferLock)
             {
+                if (!playbackPrimed)
+                {
+                    if (bufferedSamples < StartLatencySamples)
+                    {
+                        canRead = false;
+                    }
+                    else
+                    {
+                        playbackPrimed = true;
+                    }
+                }
+
                 while (written < output.Length && bufferedSamples > 0)
                 {
+                    if (!canRead)
+                    {
+                        break;
+                    }
+
                     output[written++] = samples[readIndex];
                     readIndex = (readIndex + 1) % samples.Length;
                     bufferedSamples--;
+                }
+
+                if (canRead && written < output.Length)
+                {
+                    playbackPrimed = false;
                 }
             }
 
@@ -113,7 +138,13 @@ namespace YlvaOS
                 {
                     client = listener.AcceptTcpClient();
                     client.NoDelay = true;
+                    client.ReceiveBufferSize = 256 * 1024;
                     ClearBuffer();
+                    if (log != null)
+                    {
+                        log.LogInfo("YlvaOS audio channel connected.");
+                    }
+
                     System.Threading.Tasks.Task.Run(() => ReadClient(client, token));
                 }
                 catch (ObjectDisposedException)
@@ -246,6 +277,7 @@ namespace YlvaOS
                 readIndex = 0;
                 writeIndex = 0;
                 bufferedSamples = 0;
+                playbackPrimed = false;
             }
         }
 

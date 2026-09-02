@@ -1,10 +1,11 @@
 {
   "name": "YlvaOS Linux VM image",
+  "ylvaosVersion": "0.01",
   "base": "Alpine Linux 3.24.1 virt x86_64",
   "alpineIsoUrl": "https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/x86_64/alpine-virt-3.24.1-x86_64.iso",
   "alpineIsoSha256": "e73a6241bd5f3c5c2d4d38c02cc52c378c0415a7c888bd292066bf36e0f41a39",
   "kernelSha256": "1e6bf9027720c75c3ed0d79171f21b5791ee40ca9795d07c7c6e04dc5ea2ae90",
   "initrdSha256": "4caf09640385525632f0a54dfeabd08b5bf5ceeb2b7d63e888fb858b7b3fa006",
-  "diskArchiveSha256": "6b9be659b95434569649d7d75bd1e8e2113a782b4d96a3e0b11f94cce4977688",
-  "diskQcow2Sha256": "01e9e57f1fc23988b64a28610e5f306ca65253cb51c25c699a0980ee726392d6"
+  "diskArchiveSha256": "37829a9d001ae8a94456e70a0607c0453937acdf0bf9b13de405e32d3e21f9c9",
+  "diskQcow2Sha256": "28fb02c40a5dbb0fedb0dad23d9c5847f29dc745d62d8f5eb8b80cff8f34a5d4"
 }

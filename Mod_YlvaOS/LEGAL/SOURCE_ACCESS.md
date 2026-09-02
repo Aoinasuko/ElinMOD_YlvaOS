@@ -21,6 +21,7 @@ fonts, and Japanese locale data, and writes:
 - `Mod_YlvaOS/vm/assets/vmlinuz`
 - `Mod_YlvaOS/vm/assets/initrd.img`
 - `Mod_YlvaOS/vm/disk.qcow2.gz`
+- `Mod_YlvaOS/vm/update/`
 - `Mod_YlvaOS/LEGAL/YLVAOS_IMAGE_MANIFEST.json`
 - `Mod_YlvaOS/LEGAL/alpine-installed-packages.txt`
 

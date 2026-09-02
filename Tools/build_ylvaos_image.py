@@ -32,6 +32,7 @@ ALPINE_REPO_MAIN = f"https://dl-cdn.alpinelinux.org/alpine/{ALPINE_BRANCH}/main"
 ALPINE_REPO_COMMUNITY = f"https://dl-cdn.alpinelinux.org/alpine/{ALPINE_BRANCH}/community"
 ALPINE_ISO_URL = f"{ALPINE_RELEASE_BASE}/{ALPINE_ISO}"
 ALPINE_ISO_SHA256 = "e73a6241bd5f3c5c2d4d38c02cc52c378c0415a7c888bd292066bf36e0f41a39"
+YLVAOS_VERSION = "0.01"
 
 DEFAULT_DISK_MIB = 16384
 INSTALL_TIMEOUT_SECONDS = 1800
@@ -228,6 +229,7 @@ def install_script() -> str:
             "dbus",
             "dbus-x11",
             "eudev",
+            "dialog",
             "alsa-lib",
             "alsa-utils",
             "alsa-plugins",
@@ -243,7 +245,10 @@ def install_script() -> str:
             "xterm",
             "openbox",
             "tint2",
+            "pcmanfm",
+            "mc",
             "xdotool",
+            "xdg-utils",
             "xrandr",
             "xsetroot",
             "font-dejavu",
@@ -287,18 +292,23 @@ if [ -d "/lib/modules/$kernel_release" ]; then
 fi
 
 printf 'YlvaOS\\n' >/mnt/etc/hostname
+cat >/mnt/etc/ylvaos-release <<'EOF'
+YLVAOS_VERSION="{YLVAOS_VERSION}"
+ALPINE_VERSION="{ALPINE_VERSION}"
+EOF
+
 cat >/mnt/etc/os-release <<'EOF'
 NAME="YlvaOS"
 ID=ylvaos
 ID_LIKE=alpine
 VERSION_ID="{ALPINE_VERSION}"
-PRETTY_NAME="YlvaOS 0.1.0 (Alpine Linux {ALPINE_VERSION} base)"
+PRETTY_NAME="Alpine Linux {ALPINE_VERSION} base / YlvaOS {YLVAOS_VERSION}"
 HOME_URL="https://ylva.local/"
 SUPPORT_URL="https://alpinelinux.org/"
 EOF
 
 cat >/mnt/etc/issue <<'EOF'
-YlvaOS 0.1.0 (Alpine Linux {ALPINE_VERSION} base) \\n \\l
+Alpine Linux {ALPINE_VERSION} base / YlvaOS {YLVAOS_VERSION} \\n \\l
 
 EOF
 
@@ -353,6 +363,7 @@ YlvaOS quick notes
 - QEMU runtime networking is disabled by default in the MOD backend.
 - Run ConnectNetwork and type yes to enable QEMU user-mode networking for this VM session.
 - After connecting, use doas apk update and doas apk add <package> to install packages.
+- Run YlvaOS update after installing a newer MOD package to update YlvaOS-managed OS files from the bundled update drive.
 - Use poweroff to shut down the VM.
 EOF
 chown 1000:1000 /mnt/home/ylva/README.txt
@@ -401,10 +412,6 @@ for _ in 1 2 3 4 5; do
     fi
     sleep 1
 done
-
-if command -v ylva-audio-bridge >/dev/null 2>&1 && ! pgrep -f '/usr/bin/ylva-audio-bridge' >/dev/null 2>&1; then
-    ylva-audio-bridge >/tmp/ylva-audio-bridge.log 2>&1 &
-fi
 
 if ! id "$user" >/dev/null 2>&1; then
     adduser -D -h "/home/$user" -s /bin/ash "$user" >/dev/null 2>&1 || user=ylva
@@ -515,32 +522,21 @@ cat >/mnt/usr/bin/ylva-splash <<'EOF'
 #!/bin/sh
 set -u
 
-version="0.1.0"
+version="{YLVAOS_VERSION}"
+base="Alpine Linux {ALPINE_VERSION} base / YlvaOS $version"
 if [ -t 1 ]; then
-    white="$(printf '\\033[97m')"
-    green="$(printf '\\033[92m')"
+    cyan="$(printf '\\033[96m')"
     reset="$(printf '\\033[0m')"
 else
-    white=""
-    green=""
+    cyan=""
     reset=""
 fi
 
-border="--------------------------------------------------------------------------------"
-splash_line() {
-    printf '| %s%-24s%s   %s%-51s%s |\\n' "$white" "$1" "$reset" "$green" "$2" "$reset"
-}
-
-printf '+%s+\\n' "$border"
-splash_line '       ____             ' ' __   __ _             ___  ____'
-splash_line "    .-'    '-.          " ' \\ \\ / /| |_   ____ _ / _ \\/ ___|'
-splash_line '   /  o    o  \\         ' '  \\ V / | | \\ \\ / / _` | | | \\___ \\ '
-splash_line '  |     __     |        ' '   | |  | |  \\ V / (_| | |_| |___) |'
-splash_line "   \\   '--'   /         " '   |_|  |_|   \\_/ \\__,_|\\___/|____/'
-splash_line "    '._    _.'          " '                                                   '
-splash_line "       '--'             " '                                                   '
-printf '| %-78s |\\n' "ver $version"
-printf '+%s+\\n' "$border"
+printf '%s-----------------------------\\n' "$cyan"
+printf ' ^           Ylva OS\\n'
+printf '(  * *)   by aoi_nasuko\\n'
+printf -- '-----------------------------\\n'
+printf '%s%s\\n' "$base" "$reset"
 EOF
 chmod 0755 /mnt/usr/bin/ylva-splash
 
@@ -747,18 +743,15 @@ cat >/mnt/usr/bin/ylva-audio-bridge <<'EOF'
 set -u
 export PATH=/sbin:/bin:/usr/sbin:/usr/bin
 
-pipe=/tmp/ylva-audio.pcm
+user="$(id -un 2>/dev/null || printf ylva)"
+runtime="${XDG_RUNTIME_DIR:-/tmp/ylva-runtime-$user}"
 port=/dev/virtio-ports/org.ylvaos.audio
+export XDG_RUNTIME_DIR="$runtime"
+export PULSE_SERVER="${PULSE_SERVER:-unix:$runtime/pulse/native}"
+export ALSA_CONFIG_PATH="${ALSA_CONFIG_PATH:-/etc/asound.conf}"
 
-prepare_pipe() {
-    if [ ! -p "$pipe" ]; then
-        rm -f "$pipe"
-        mkfifo "$pipe"
-    fi
-    chmod 0666 "$pipe" >/dev/null 2>&1 || true
-}
-
-prepare_pipe
+mkdir -p "$runtime" "$runtime/pulse" 2>/dev/null || true
+chmod 700 "$runtime" 2>/dev/null || true
 while :; do
     if [ ! -e "$port" ]; then
         sleep 1
@@ -766,8 +759,17 @@ while :; do
     fi
 
     chmod 0666 "$port" >/dev/null 2>&1 || true
-    prepare_pipe
-    cat "$pipe" >"$port" 2>/dev/null || sleep 1
+    if ! pactl info >/dev/null 2>&1; then
+        sleep 1
+        continue
+    fi
+
+    if ! pactl list short sources 2>/dev/null | awk '{print $2}' | grep -qx ylva.monitor; then
+        sleep 1
+        continue
+    fi
+
+    parec --device=ylva.monitor --format=s16le --rate=44100 --channels=2 --latency-msec=120 >"$port" 2>/tmp/ylva-audio-bridge.log || sleep 1
 done
 EOF
 chmod 0755 /mnt/usr/bin/ylva-audio-bridge
@@ -779,21 +781,12 @@ export PATH=/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
 
 user="$(id -un 2>/dev/null || printf ylva)"
 runtime="${XDG_RUNTIME_DIR:-/tmp/ylva-runtime-$user}"
-pipe=/tmp/ylva-audio.pcm
 export XDG_RUNTIME_DIR="$runtime"
 export PULSE_SERVER="unix:$runtime/pulse/native"
 export ALSA_CONFIG_PATH=/etc/asound.conf
 
 mkdir -p "$runtime" "$runtime/pulse"
 chmod 700 "$runtime" 2>/dev/null || true
-if [ ! -p "$pipe" ]; then
-    rm -f "$pipe"
-    mkfifo "$pipe"
-fi
-chmod 0666 "$pipe" >/dev/null 2>&1 || true
-if command -v ylva-audio-bridge >/dev/null 2>&1 && ! pgrep -f '/usr/bin/ylva-audio-bridge' >/dev/null 2>&1; then
-    ylva-audio-bridge >/tmp/ylva-audio-bridge.log 2>&1 &
-fi
 
 if ! pulseaudio --check >/dev/null 2>&1; then
     pulseaudio --daemonize=yes --exit-idle-time=-1 --log-target=file:/tmp/ylva-pulseaudio.log >/dev/null 2>&1 || true
@@ -810,11 +803,23 @@ for _ in 1 2 3; do
     if pactl list short sinks 2>/dev/null | awk '{print $2}' | grep -qx ylva; then
         break
     fi
-    pactl load-module module-pipe-sink sink_name=ylva file="$pipe" format=s16le rate=44100 channels=2 sink_properties=device.description=YlvaOS >/tmp/ylva-pipe-sink.id 2>/tmp/ylva-pipe-sink.log || true
+    pactl load-module module-null-sink sink_name=ylva format=s16le rate=44100 channels=2 sink_properties=device.description=YlvaOS >/tmp/ylva-null-sink.id 2>/tmp/ylva-null-sink.log || true
     sleep 1
 done
 
 pactl set-default-sink ylva >/dev/null 2>&1 || true
+
+if command -v ylva-audio-bridge >/dev/null 2>&1; then
+    if pgrep -f '/usr/bin/ylva-audio-bridge' >/dev/null 2>&1; then
+        if [ "$(id -u)" -eq 0 ]; then
+            pkill -f '/usr/bin/ylva-audio-bridge' >/dev/null 2>&1 || true
+        else
+            doas pkill -f '/usr/bin/ylva-audio-bridge' >/dev/null 2>&1 || pkill -f '/usr/bin/ylva-audio-bridge' >/dev/null 2>&1 || true
+        fi
+        sleep 1
+    fi
+    ylva-audio-bridge >/tmp/ylva-audio-bridge.log 2>&1 &
+fi
 
 soundfont=/usr/share/sounds/sf2/TimGM6mb.sf2
 if [ ! -f "$soundfont" ]; then
@@ -833,9 +838,9 @@ chmod 0755 /mnt/usr/bin/ylva-start-audio
 mkdir -p /mnt/etc/local.d
 cat >/mnt/etc/local.d/ylva-audio.start <<'EOF'
 #!/bin/sh
-if command -v ylva-audio-bridge >/dev/null 2>&1 && ! pgrep -f '/usr/bin/ylva-audio-bridge' >/dev/null 2>&1; then
-    ylva-audio-bridge >/tmp/ylva-audio-bridge.log 2>&1 &
-fi
+# The audio bridge is started from the logged-in user session by ylva-start-audio,
+# so it can use that user's PulseAudio runtime directory.
+exit 0
 EOF
 chmod 0755 /mnt/etc/local.d/ylva-audio.start
 
@@ -847,7 +852,7 @@ export LC_CTYPE=ja_JP.UTF-8
 export LC_MESSAGES=C.UTF-8
 export WINEPREFIX="${WINEPREFIX:-$HOME/.wine}"
 export WINEDLLOVERRIDES="${WINEDLLOVERRIDES:-mscoree,mshtml=}"
-export PULSE_LATENCY_MSEC="${PULSE_LATENCY_MSEC:-60}"
+export PULSE_LATENCY_MSEC="${PULSE_LATENCY_MSEC:-120}"
 if [ -z "${XDG_RUNTIME_DIR:-}" ]; then
     ylva_audio_user="$(id -un 2>/dev/null || printf ylva)"
     export XDG_RUNTIME_DIR="/tmp/ylva-runtime-$ylva_audio_user"
@@ -869,7 +874,7 @@ if pactl list short sinks 2>/dev/null | awk '{print $2}' | grep -qx ylva; then
     exit 0
 fi
 
-echo "YlvaOS audio sink did not become ready. See /tmp/ylva-audio.log and /tmp/ylva-pipe-sink.log."
+echo "YlvaOS audio sink did not become ready. See /tmp/ylva-audio.log and /tmp/ylva-null-sink.log."
 exit 1
 EOF
 chmod 0755 /mnt/usr/lib/ylvaos/setup-audio
@@ -897,7 +902,7 @@ cat >/mnt/usr/lib/ylvaos/setup-wine <<'EOF'
 set -u
 . /usr/lib/ylvaos/wine-env
 
-marker="$WINEPREFIX/.ylvaos-jp-wine-v3"
+marker="$WINEPREFIX/.ylvaos-jp-wine-v4"
 if [ -f "$marker" ]; then
     echo "Wine prefix is ready at $WINEPREFIX."
     exit 0
@@ -907,7 +912,7 @@ mkdir -p "$WINEPREFIX"
 /usr/lib/ylvaos/setup-audio >/tmp/ylva-audio.log 2>&1 || true
 wineboot -u >/tmp/ylva-wineboot.log 2>&1 || true
 
-wine reg add 'HKCU\\Software\\Wine\\Drivers' /v Audio /d alsa /f >/dev/null 2>&1 || true
+wine reg add 'HKCU\\Software\\Wine\\Drivers' /v Audio /d pulse /f >/dev/null 2>&1 || true
 wine reg add 'HKCU\\Control Panel\\International' /v LocaleName /d ja-JP /f >/dev/null 2>&1 || true
 wine reg add 'HKCU\\Control Panel\\International' /v sCountry /d Japan /f >/dev/null 2>&1 || true
 wine reg add 'HKCU\\Control Panel\\International' /v sLanguage /d JPN /f >/dev/null 2>&1 || true
@@ -922,6 +927,116 @@ touch "$marker"
 echo "Wine prefix is ready at $WINEPREFIX."
 EOF
 chmod 0755 /mnt/usr/lib/ylvaos/setup-wine
+
+cat >/mnt/usr/lib/ylvaos/update-from-mod <<'EOF'
+#!/bin/sh
+set -u
+export PATH=/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+
+as_root() {
+    if [ "$(id -u)" -eq 0 ]; then
+        "$@"
+    else
+        doas "$@"
+    fi
+}
+
+read_release_value() {
+    file="$1"
+    key="$2"
+    [ -f "$file" ] || return 0
+    sed -n "s/^${key}=//p" "$file" | sed 's/^"//;s/"$//' | head -n 1
+}
+
+version_part() {
+    part="$(printf '%s' "$1" | sed 's/[^0-9].*$//;s/^0*//')"
+    if [ -z "$part" ]; then
+        part=0
+    fi
+    printf '%s' "$part"
+}
+
+version_gt() {
+    old="$1"
+    new="$2"
+    while :; do
+        old_part="$old"
+        new_part="$new"
+        case "$old" in *.*) old_part="${old%%.*}"; old="${old#*.}" ;; *) old="" ;; esac
+        case "$new" in *.*) new_part="${new%%.*}"; new="${new#*.}" ;; *) new="" ;; esac
+        old_num="$(version_part "$old_part")"
+        new_num="$(version_part "$new_part")"
+        if [ "$new_num" -gt "$old_num" ]; then
+            return 0
+        fi
+        if [ "$new_num" -lt "$old_num" ]; then
+            return 1
+        fi
+        [ -n "$old" ] || [ -n "$new" ] || return 1
+    done
+}
+
+find_update_source() {
+    mount_dir="$1"
+    mkdir -p "$mount_dir"
+    if mountpoint -q "$mount_dir" 2>/dev/null; then
+        if [ -f "$mount_dir/YLVAOS_UPDATE_SOURCE" ]; then
+            return 0
+        fi
+        as_root umount "$mount_dir" >/dev/null 2>&1 || true
+    fi
+
+    for dev in /dev/vdc1 /dev/vdc /dev/vdd1 /dev/vdd /dev/vdb1 /dev/vdb /dev/sdb1 /dev/sdb /dev/sda1 /dev/sda; do
+        [ -b "$dev" ] || continue
+        if as_root mount -t vfat -o ro,utf8=1 "$dev" "$mount_dir" >/tmp/ylva-update-mount.log 2>&1; then
+            if [ -f "$mount_dir/YLVAOS_UPDATE_SOURCE" ]; then
+                return 0
+            fi
+            as_root umount "$mount_dir" >/dev/null 2>&1 || true
+        fi
+    done
+
+    return 1
+}
+
+mount_dir=/run/ylvaos-update-source
+current_version="$(read_release_value /etc/ylvaos-release YLVAOS_VERSION)"
+current_version="${current_version:-0.00}"
+
+if ! find_update_source "$mount_dir"; then
+    echo "No YlvaOS MOD update source was found."
+    echo "Install a newer MOD package that contains vm/update, then start YlvaOS again."
+    exit 1
+fi
+
+target_version="$(read_release_value "$mount_dir/ylvaos-release" YLVAOS_VERSION)"
+target_alpine="$(read_release_value "$mount_dir/ylvaos-release" ALPINE_VERSION)"
+if [ -z "$target_version" ]; then
+    echo "The YlvaOS MOD update source is missing ylvaos-release."
+    exit 1
+fi
+
+echo "Installed: YlvaOS $current_version"
+echo "Bundled:   Alpine Linux ${target_alpine:-unknown} base / YlvaOS $target_version"
+
+if ! version_gt "$current_version" "$target_version"; then
+    echo "YlvaOS is already up to date."
+    exit 0
+fi
+
+if [ ! -f "$mount_dir/rootfs-overlay.tar.gz" ] || [ ! -f "$mount_dir/update.sh" ]; then
+    echo "The YlvaOS MOD update source is incomplete."
+    exit 1
+fi
+
+echo "Updating YlvaOS-managed OS files from the MOD package..."
+if [ "$(id -u)" -eq 0 ]; then
+    sh "$mount_dir/update.sh"
+else
+    doas sh "$mount_dir/update.sh"
+fi
+EOF
+chmod 0755 /mnt/usr/lib/ylvaos/update-from-mod
 
 cat >/mnt/usr/bin/Terminal <<'EOF'
 #!/bin/sh
@@ -940,6 +1055,224 @@ fi) >/dev/null 2>&1 &
 EOF
 chmod 0755 /mnt/usr/bin/Terminal
 ln -sf /usr/bin/Terminal /mnt/usr/bin/terminal
+
+cat >/mnt/usr/bin/Files <<'EOF'
+#!/bin/sh
+set -u
+export PATH=/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+
+as_root() {
+    if [ "$(id -u)" -eq 0 ]; then
+        "$@"
+    else
+        doas "$@"
+    fi
+}
+
+ensure_user_dirs() {
+    mkdir -p "$HOME/Desktop" "$HOME/Documents" "$HOME/Downloads" "$HOME/Pictures" "$HOME/Import"
+}
+
+ensure_import_mount() {
+    ensure_user_dirs
+    if mountpoint -q "$HOME/Import" 2>/dev/null; then
+        return 0
+    fi
+
+    for dev in /dev/vdb1 /dev/vdb /dev/vdc1 /dev/vdc /dev/sda1 /dev/sda /dev/sdb1 /dev/sdb; do
+        [ -b "$dev" ] || continue
+        as_root mount -t vfat -o ro,uid="$(id -u)",gid="$(id -g)",utf8=1 "$dev" "$HOME/Import" >/tmp/ylva-import-mount.log 2>&1 && return 0
+    done
+
+    return 1
+}
+
+start_dbus_session() {
+    if [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ] && command -v dbus-launch >/dev/null 2>&1; then
+        eval "$(dbus-launch --sh-syntax 2>/dev/null)" || true
+    fi
+}
+
+ensure_user_dirs
+ensure_import_mount >/dev/null 2>&1 || true
+
+target="${1:-$HOME}"
+case "$target" in
+    home|Home) target="$HOME" ;;
+    import|Import) target="$HOME/Import" ;;
+    desktop|Desktop) target="$HOME/Desktop" ;;
+    documents|Documents) target="$HOME/Documents" ;;
+    downloads|Downloads) target="$HOME/Downloads" ;;
+    pictures|Pictures) target="$HOME/Pictures" ;;
+esac
+
+if [ ! -e "$target" ]; then
+    target="$HOME"
+fi
+
+if [ -n "${DISPLAY:-}" ] && command -v pcmanfm >/dev/null 2>&1; then
+    (
+        start_dbus_session
+        pcmanfm --no-desktop "$target"
+    ) >/tmp/ylva-files.log 2>&1 &
+    exit 0
+fi
+
+if [ -n "${DISPLAY:-}" ] && command -v xterm >/dev/null 2>&1 && command -v mc >/dev/null 2>&1; then
+    xterm -title "YlvaOS Files" -geometry 100x30+72+72 -e mc "$target" &
+    exit 0
+fi
+
+if command -v mc >/dev/null 2>&1; then
+    exec mc "$target"
+fi
+
+echo "No file manager is installed."
+exit 1
+EOF
+chmod 0755 /mnt/usr/bin/Files
+ln -sf /usr/bin/Files /mnt/usr/bin/files
+
+cat >/mnt/usr/lib/ylvaos/settings-tui <<'EOF'
+#!/bin/sh
+set -u
+export PATH=/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+
+is_positive_int() {
+    case "$1" in
+        ''|*[!0-9]* ) return 1 ;;
+    esac
+
+    [ "$1" -gt 0 ] 2>/dev/null
+}
+
+pause_screen() {
+    printf '\nPress Enter to continue... '
+    IFS= read -r _ || true
+}
+
+read_value() {
+    prompt="$1"
+    printf '%s: ' "$prompt" >&2
+    IFS= read -r value || value=
+    printf '%s' "$value"
+}
+
+show_status() {
+    echo "YlvaOS Settings"
+    echo "==============="
+    echo
+    printf 'User: %s\n' "$(id -un 2>/dev/null || printf ylva)"
+    printf 'Kernel: %s\n' "$(uname -r)"
+    awk '/^MemTotal:/ { printf "Guest memory: %.0f MiB\n", $2 / 1024 }' /proc/meminfo 2>/dev/null || true
+    df -h / 2>/dev/null | awk 'NR==2 { printf "Root disk: %s used / %s total (%s)\n", $3, $2, $5 }' || true
+    if ip route 2>/dev/null | grep -q '^default '; then
+        echo "Network: connected for this VM session"
+    else
+        echo "Network: disconnected"
+    fi
+    if pactl info >/dev/null 2>&1; then
+        echo "Audio: PulseAudio ready"
+    else
+        echo "Audio: not ready"
+    fi
+}
+
+set_memory() {
+    value="$(read_value 'Memory target MiB')"
+    if ! is_positive_int "$value"; then
+        echo "memory must be a positive MiB value"
+        pause_screen
+        return
+    fi
+
+    YlvaOS set memory "$value"
+    pause_screen
+}
+
+set_disk() {
+    value="$(read_value 'Disk target MiB')"
+    if ! is_positive_int "$value"; then
+        echo "disk must be a positive MiB value"
+        pause_screen
+        return
+    fi
+
+    YlvaOS set disk "$value"
+    pause_screen
+}
+
+set_resolution() {
+    width="$(read_value 'Desktop width')"
+    height="$(read_value 'Desktop height')"
+    if ! is_positive_int "$width" || ! is_positive_int "$height"; then
+        echo "width and height must be positive integer values"
+        pause_screen
+        return
+    fi
+
+    YlvaOS set desktop "$width" "$height"
+    pause_screen
+}
+
+set_fps() {
+    value="$(read_value 'Desktop refresh FPS')"
+    if ! is_positive_int "$value"; then
+        echo "fps must be a positive integer value"
+        pause_screen
+        return
+    fi
+
+    YlvaOS set fps "$value"
+    pause_screen
+}
+
+while :; do
+    clear 2>/dev/null || true
+    show_status
+    cat <<'MENU'
+
+1) Set memory target
+2) Set disk target
+3) Set desktop resolution
+4) Set desktop refresh FPS
+5) Setup audio
+6) Connect network
+7) Open file manager
+8) Quit
+
+MENU
+    printf 'Select: '
+    IFS= read -r choice || exit 0
+    case "$choice" in
+        1) set_memory ;;
+        2) set_disk ;;
+        3) set_resolution ;;
+        4) set_fps ;;
+        5) YlvaOS setup audio; pause_screen ;;
+        6) ConnectNetwork; pause_screen ;;
+        7) Files; pause_screen ;;
+        8|q|Q) exit 0 ;;
+        *) echo "Unknown selection."; pause_screen ;;
+    esac
+done
+EOF
+chmod 0755 /mnt/usr/lib/ylvaos/settings-tui
+
+cat >/mnt/usr/bin/Settings <<'EOF'
+#!/bin/sh
+set -u
+export PATH=/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+
+if [ -n "${DISPLAY:-}" ] && command -v xterm >/dev/null 2>&1 && [ "${YLVA_SETTINGS_INLINE:-0}" != 1 ]; then
+    YLVA_SETTINGS_INLINE=1 xterm -title "YlvaOS Settings" -geometry 88x30+96+72 -e /usr/lib/ylvaos/settings-tui &
+    exit 0
+fi
+
+exec /usr/lib/ylvaos/settings-tui
+EOF
+chmod 0755 /mnt/usr/bin/Settings
+ln -sf /usr/bin/Settings /mnt/usr/bin/settings
 
 cat >/mnt/usr/local/bin/ylva-desktop-session <<'EOF'
 #!/bin/sh
@@ -1006,6 +1339,74 @@ cat >"$home/.config/openbox/rc.xml" <<'EOF_OBRC'
     </keybind>
   </keyboard>
   <mouse>
+    <context name="Frame">
+      <mousebind button="Left" action="Press">
+        <action name="Focus"/>
+        <action name="Raise"/>
+      </mousebind>
+    </context>
+    <context name="Client">
+      <mousebind button="Left" action="Press">
+        <action name="Focus"/>
+        <action name="Raise"/>
+      </mousebind>
+    </context>
+    <context name="Titlebar">
+      <mousebind button="Left" action="Press">
+        <action name="Focus"/>
+        <action name="Raise"/>
+        <action name="Unshade"/>
+      </mousebind>
+      <mousebind button="Left" action="Drag">
+        <action name="Move"/>
+      </mousebind>
+      <mousebind button="Left" action="DoubleClick">
+        <action name="ToggleMaximize"/>
+      </mousebind>
+      <mousebind button="Middle" action="Press">
+        <action name="Lower"/>
+      </mousebind>
+      <mousebind button="Right" action="Press">
+        <action name="ShowMenu">
+          <menu>client-menu</menu>
+        </action>
+      </mousebind>
+    </context>
+    <context name="Top Right Bottom Left TLCorner TRCorner BRCorner BLCorner">
+      <mousebind button="Left" action="Press">
+        <action name="Focus"/>
+        <action name="Raise"/>
+        <action name="Unshade"/>
+      </mousebind>
+      <mousebind button="Left" action="Drag">
+        <action name="Resize"/>
+      </mousebind>
+    </context>
+    <context name="Iconify">
+      <mousebind button="Left" action="Click">
+        <action name="Iconify"/>
+      </mousebind>
+    </context>
+    <context name="Maximize">
+      <mousebind button="Left" action="Click">
+        <action name="ToggleMaximize"/>
+      </mousebind>
+      <mousebind button="Middle" action="Click">
+        <action name="ToggleMaximize">
+          <direction>vertical</direction>
+        </action>
+      </mousebind>
+      <mousebind button="Right" action="Click">
+        <action name="ToggleMaximize">
+          <direction>horizontal</direction>
+        </action>
+      </mousebind>
+    </context>
+    <context name="Close">
+      <mousebind button="Left" action="Click">
+        <action name="Close"/>
+      </mousebind>
+    </context>
     <context name="Root">
       <mousebind button="Right" action="Press">
         <action name="ShowMenu">
@@ -1024,11 +1425,22 @@ cat >"$home/.config/openbox/menu.xml" <<'EOF_OBMENU'
 <?xml version="1.0" encoding="UTF-8"?>
 <openbox_menu xmlns="http://openbox.org/3.4/menu">
   <menu id="root-menu" label="YlvaOS">
+    <item label="Settings">
+      <action name="Execute">
+        <command>Settings</command>
+      </action>
+    </item>
+    <item label="File Manager">
+      <action name="Execute">
+        <command>Files</command>
+      </action>
+    </item>
     <item label="Terminal">
       <action name="Execute">
         <command>Terminal</command>
       </action>
     </item>
+    <separator />
     <item label="Return to Kernel">
       <action name="Execute">
         <command>Kernel</command>
@@ -1047,6 +1459,10 @@ chmod 0755 "$home/.config/openbox/autostart" 2>/dev/null || true
 
 xrandr -s "${width}x${height}" 2>/dev/null || true
 xsetroot -solid '#12211f' 2>/dev/null || true
+if command -v dbus-launch >/dev/null 2>&1; then
+    exec dbus-launch --exit-with-session openbox-session
+fi
+
 exec openbox-session
 EOF
 chmod 0755 /mnt/usr/local/bin/ylva-desktop-session
@@ -1172,7 +1588,10 @@ emit_host() {
 }
 
 usage() {
-    echo "usage: YlvaOS set memory <MiB> | YlvaOS set disk <MiB> | YlvaOS setup wine|font|audio | YlvaOS status"
+    echo "usage: YlvaOS status | YlvaOS update | YlvaOS settings | YlvaOS files [path]"
+    echo "       YlvaOS set memory <MiB> | YlvaOS set disk <MiB>"
+    echo "       YlvaOS set desktop <WxH>|<width> <height> | YlvaOS set fps <FPS>"
+    echo "       YlvaOS setup wine|font|audio"
 }
 
 is_positive_int() {
@@ -1188,9 +1607,27 @@ case "${1:-}" in
         usage
         ;;
     status)
-        echo "YlvaOS $(uname -r)"
+        if [ -f /etc/ylvaos-release ]; then
+            . /etc/ylvaos-release
+            echo "Alpine Linux ${ALPINE_VERSION:-unknown} base / YlvaOS ${YLVAOS_VERSION:-unknown}"
+        else
+            echo "YlvaOS $(uname -r)"
+        fi
         grep '^MemTotal:' /proc/meminfo
         df -h /
+        ;;
+    update)
+        /usr/lib/ylvaos/update-from-mod
+        ;;
+    settings)
+        Settings
+        ;;
+    files|file-manager|filemanager)
+        if [ -n "${2:-}" ]; then
+            Files "$2"
+        else
+            Files
+        fi
         ;;
     set)
         case "${2:-}" in
@@ -1209,6 +1646,33 @@ case "${1:-}" in
                 fi
                 ylva-control "set disk $3"
                 echo "YlvaOS disk target set to $3 MiB. Reboot YlvaOS to apply."
+                ;;
+            desktop|resolution)
+                if [ -n "${4:-}" ]; then
+                    width="${3:-}"
+                    height="${4:-}"
+                else
+                    case "${3:-}" in
+                        *[xX]* ) ;;
+                        *) echo "desktop size must be formatted like 1024x768 or 1024 768"; exit 2 ;;
+                    esac
+                    width="$(printf '%s' "${3:-}" | sed 's/[xX].*$//')"
+                    height="$(printf '%s' "${3:-}" | sed 's/^.*[xX]//')"
+                fi
+                if ! is_positive_int "$width" || ! is_positive_int "$height"; then
+                    echo "desktop size must be formatted like 1024x768 or 1024 768"
+                    exit 2
+                fi
+                ylva-control "set desktop $width $height"
+                echo "YlvaOS desktop target set to ${width}x${height}. Reboot YlvaOS to apply."
+                ;;
+            fps|framerate)
+                if ! is_positive_int "${3:-}"; then
+                    echo "fps must be a positive integer"
+                    exit 2
+                fi
+                ylva-control "set fps $3"
+                echo "YlvaOS desktop refresh target set to $3 fps. Reboot YlvaOS to apply."
                 ;;
             *)
                 usage
@@ -1271,6 +1735,115 @@ do
     fi
 done
 
+cat >/mnt/usr/lib/ylvaos/managed-files <<'EOF'
+etc/apk/repositories
+etc/asound.conf
+etc/fonts/local.conf
+etc/hostname
+etc/issue
+etc/local.d/ylva-audio.start
+etc/motd
+etc/os-release
+etc/profile.d/ylvaos-audio.sh
+etc/profile.d/ylvaos-locale.sh
+etc/profile.d/ylvaos-terminal.sh
+etc/X11/Xwrapper.config
+etc/X11/xorg.conf.d/10-ylvaos-input.conf
+etc/ylvaos-release
+sbin/ylva-getty
+usr/bin/ConnectNetwork
+usr/bin/connectnetwork
+usr/bin/Desktop
+usr/bin/desktop
+usr/bin/Files
+usr/bin/files
+usr/bin/Kernel
+usr/bin/kernel
+usr/bin/Settings
+usr/bin/settings
+usr/bin/Terminal
+usr/bin/terminal
+usr/bin/YlvaOS
+usr/bin/ylva-audio-bridge
+usr/bin/ylva-control
+usr/bin/ylva-host-agent
+usr/bin/ylva-splash
+usr/bin/ylva-start-audio
+usr/lib/ylvaos/managed-files
+usr/lib/ylvaos/settings-tui
+usr/lib/ylvaos/setup-audio
+usr/lib/ylvaos/setup-font
+usr/lib/ylvaos/setup-wine
+usr/lib/ylvaos/update-from-mod
+usr/lib/ylvaos/wine-env
+usr/local/bin/ylva-desktop-session
+usr/sbin/ylva-start-desktop
+usr/sbin/ylva-stop-desktop
+EOF
+
+tar -czf /tmp/ylvaos-rootfs-overlay.tar.gz -C /mnt $(cat /mnt/usr/lib/ylvaos/managed-files)
+
+cat >/tmp/ylvaos-update.sh <<'EOF'
+#!/bin/sh
+set -eu
+export PATH=/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+
+source_dir="$(CDPATH= cd "$(dirname "$0")" && pwd)"
+release="$source_dir/ylvaos-release"
+overlay="$source_dir/rootfs-overlay.tar.gz"
+
+if [ "$(id -u)" -ne 0 ]; then
+    echo "YlvaOS update.sh must run as root."
+    exit 1
+fi
+
+if [ ! -f "$release" ] || [ ! -f "$overlay" ]; then
+    echo "YlvaOS update payload is incomplete."
+    exit 1
+fi
+
+. "$release"
+backup="/etc/ylvaos-release.before-update"
+cp /etc/ylvaos-release "$backup" 2>/dev/null || true
+tar -xzf "$overlay" -C /
+fc-cache -f >/tmp/ylva-update-font-cache.log 2>&1 || true
+sync
+echo "YlvaOS update applied."
+echo "Alpine Linux ${ALPINE_VERSION:-unknown} base / YlvaOS ${YLVAOS_VERSION:-unknown}"
+echo "Rebooting YlvaOS..."
+reboot
+EOF
+
+export_update_payload() {
+    export_mount=/tmp/ylvaos-update-export
+    mkdir -p "$export_mount"
+    for dev in /dev/vdc /dev/vdc1 /dev/vdd /dev/vdd1 /dev/sdb /dev/sdb1 /dev/sdc /dev/sdc1; do
+        [ -b "$dev" ] || continue
+        if mount -t vfat -o rw "$dev" "$export_mount" >/tmp/ylva-update-export.log 2>&1; then
+            if [ -f "$export_mount/YLVA_UPDATE_EXPORT_DRIVE" ]; then
+                rm -f "$export_mount/rootfs-overlay.tar.gz" \
+                    "$export_mount/ylvaos-release" \
+                    "$export_mount/update.sh" \
+                    "$export_mount/YLVAOS_UPDATE_SOURCE"
+                cp /tmp/ylvaos-rootfs-overlay.tar.gz "$export_mount/rootfs-overlay.tar.gz"
+                cp /mnt/etc/ylvaos-release "$export_mount/ylvaos-release"
+                cp /tmp/ylvaos-update.sh "$export_mount/update.sh"
+                printf 'YlvaOS MOD update source\n' >"$export_mount/YLVAOS_UPDATE_SOURCE"
+                sync
+                umount "$export_mount"
+                echo __YLVA_UPDATE_EXPORT_DONE__
+                return 0
+            fi
+            umount "$export_mount" >/dev/null 2>&1 || true
+        fi
+    done
+
+    echo __YLVA_UPDATE_EXPORT_FAILED__
+    return 1
+}
+
+export_update_payload
+
 mkdir -p /mnt/root
 apk --root /mnt info -vv >/mnt/root/YLVAOS_PACKAGES.txt || true
 echo __YLVA_PACKAGES_BEGIN__
@@ -1287,6 +1860,7 @@ poweroff -f
         script.replace("{ALPINE_REPO_MAIN}", ALPINE_REPO_MAIN)
         .replace("{ALPINE_REPO_COMMUNITY}", ALPINE_REPO_COMMUNITY)
         .replace("{ALPINE_VERSION}", ALPINE_VERSION)
+        .replace("{YLVAOS_VERSION}", YLVAOS_VERSION)
         .replace("{packages}", packages)
     )
 
@@ -1299,6 +1873,38 @@ def prepare_install_seed(build_dir: Path) -> Path:
     with (seed_dir / "install.sh").open("w", encoding="utf-8", newline="\n") as handle:
         handle.write(install_script().replace("\r\n", "\n"))
     return seed_dir
+
+
+def prepare_update_export(build_dir: Path) -> Path:
+    export_dir = build_dir / "update-export"
+    if export_dir.exists():
+        shutil.rmtree(export_dir)
+    export_dir.mkdir(parents=True)
+    (export_dir / "YLVA_UPDATE_EXPORT_DRIVE").write_text("YlvaOS update export drive\n", encoding="utf-8")
+    return export_dir
+
+
+def publish_update_payload(root: Path, export_dir: Path) -> None:
+    update_dir = root / "Mod_YlvaOS" / "vm" / "update"
+    update_dir.mkdir(parents=True, exist_ok=True)
+    for child in update_dir.iterdir():
+        if child.is_dir():
+            shutil.rmtree(child)
+        else:
+            child.unlink()
+
+    required = [
+        "YLVAOS_UPDATE_SOURCE",
+        "ylvaos-release",
+        "update.sh",
+        "rootfs-overlay.tar.gz",
+    ]
+    for name in required:
+        source = export_dir / name
+        if not source.exists():
+            raise RuntimeError(f"YlvaOS update payload was not exported: missing {source}")
+        shutil.copyfile(source, update_dir / name)
+    print(f"Wrote {update_dir}")
 
 
 def mount_install_seed(console: QemuConsole, prompt: str) -> None:
@@ -1339,6 +1945,7 @@ def create_preinstalled_disk(root: Path, iso: Path, disk_mib: int, force: bool) 
         disk.unlink()
 
     seed_dir = prepare_install_seed(build_dir)
+    update_export_dir = prepare_update_export(build_dir)
     run_checked([str(qemu_img), "create", "-f", "qcow2", str(disk), f"{disk_mib}M"], cwd=build_dir)
 
     qemu_args = [
@@ -1366,6 +1973,8 @@ def create_preinstalled_disk(root: Path, iso: Path, disk_mib: int, force: bool) 
         f"file={disk},if=virtio,format=qcow2",
         "-drive",
         f"file=fat:ro:{seed_dir.as_posix()},if=virtio,format=raw,media=disk,readonly=on",
+        "-drive",
+        f"file=fat:rw:{update_export_dir.as_posix()},if=virtio,format=raw,media=disk",
         "-netdev",
         "user,id=n0",
         "-device",
@@ -1392,6 +2001,8 @@ def create_preinstalled_disk(root: Path, iso: Path, disk_mib: int, force: bool) 
     log = console.snapshot()
     if "__YLVA_INSTALL_FAILED__:" in log and "__YLVA_INSTALL_DONE__" not in log:
         raise RuntimeError("YlvaOS root disk install failed; see console output above.")
+    if "__YLVA_UPDATE_EXPORT_DONE__" not in log:
+        raise RuntimeError("YlvaOS update payload export failed; see console output above.")
 
     legal_dir = root / "Mod_YlvaOS" / "LEGAL"
     legal_dir.mkdir(parents=True, exist_ok=True)
@@ -1399,6 +2010,7 @@ def create_preinstalled_disk(root: Path, iso: Path, disk_mib: int, force: bool) 
     if packages:
         (legal_dir / "alpine-installed-packages.txt").write_text(packages.strip() + "\n", encoding="utf-8")
 
+    publish_update_payload(root, update_export_dir)
     return disk
 
 
@@ -1440,6 +2052,7 @@ def write_manifest(root: Path, kernel: Path, initrd: Path, disk_archive: Path | 
     lines = [
         "{",
         '  "name": "YlvaOS Linux VM image",',
+        f'  "ylvaosVersion": "{YLVAOS_VERSION}",',
         f'  "base": "Alpine Linux {ALPINE_VERSION} virt x86_64",',
         f'  "alpineIsoUrl": "{ALPINE_ISO_URL}",',
         f'  "alpineIsoSha256": "{ALPINE_ISO_SHA256}",',

@@ -52,7 +52,8 @@ namespace YlvaOS
         {
             Default,
             BrightWhite,
-            BrightGreen
+            BrightGreen,
+            BrightCyan
         }
 
         private enum EscapeMode
@@ -724,6 +725,9 @@ namespace YlvaOS
                     case 92:
                         currentForeground = TerminalColor.BrightGreen;
                         break;
+                    case 96:
+                        currentForeground = TerminalColor.BrightCyan;
+                        break;
                     case 97:
                         currentForeground = TerminalColor.BrightWhite;
                         break;
@@ -796,6 +800,8 @@ namespace YlvaOS
                     return "#FFFFFF";
                 case TerminalColor.BrightGreen:
                     return "#78FF92";
+                case TerminalColor.BrightCyan:
+                    return "#78E8FF";
                 default:
                     return "#D4F8DC";
             }

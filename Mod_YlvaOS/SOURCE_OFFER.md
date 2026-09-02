@@ -5,7 +5,7 @@ software bundled with YlvaOS.
 
 ## Rebuilding the YlvaOS VM Image
 
-The boot assets and preinstalled root disk can be regenerated with:
+The boot assets, preinstalled root disk, and `vm/update` payload can be regenerated with:
 
 ```powershell
 python.exe .\Tools\build_ylvaos_image.py --force
@@ -15,8 +15,8 @@ The script downloads the official Alpine Linux virt ISO, verifies its SHA-256,
 extracts `boot/vmlinuz-virt` and `boot/initramfs-virt`, boots the ISO under the
 bundled QEMU, installs Alpine packages into a 16 GiB ext4 qcow2 root disk,
 including the lightweight X desktop, Wine, PulseAudio/ALSA audio support,
-FluidSynth, a GM soundfont, CJK fonts, and Japanese locale data, and compresses the result to
-`Mod_YlvaOS/vm/disk.qcow2.gz`.
+FluidSynth, a GM soundfont, CJK fonts, and Japanese locale data, compresses the result to
+`Mod_YlvaOS/vm/disk.qcow2.gz`, and exports the YlvaOS-managed update payload.
 
 ## QEMU Source
 

@@ -34,6 +34,8 @@ on Alpine Linux.
   - `vm/assets/initrd.img`
 - Bundled preinstalled root disk archive:
   - `vm/disk.qcow2.gz`
+- Bundled YlvaOS-managed update payload:
+  - `vm/update/`
 - Exact generated image hashes:
   - `LEGAL/YLVAOS_IMAGE_MANIFEST.json`
 - Installed package list:

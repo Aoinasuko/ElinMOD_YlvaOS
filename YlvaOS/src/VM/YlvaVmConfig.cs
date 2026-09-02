@@ -4,13 +4,15 @@ namespace YlvaOS
 {
     internal sealed class YlvaVmConfig
     {
+        private const int DefaultMemoryMiB = 4096;
+        private const int PreviousDefaultMemoryMiB = 2048;
         private const string OldDefaultKernelAppend = "console=ttyS0 root=/dev/vda rw hostname=YlvaOS";
         private const string DefaultKernelAppend = "console=ttyS0 root=/dev/vda rootfstype=ext4 rw modules=virtio_pci,virtio_blk,ext4 hostname=YlvaOS";
 
         public YlvaVmConfig()
         {
-            SchemaVersion = 3;
-            MemoryMiB = 2048;
+            SchemaVersion = 4;
+            MemoryMiB = DefaultMemoryMiB;
             DiskMiB = 16384;
             DesktopWidth = 1024;
             DesktopHeight = 768;
@@ -48,9 +50,14 @@ namespace YlvaOS
                 KernelAppend = DefaultKernelAppend;
             }
 
-            SchemaVersion = 3;
+            if (SchemaVersion < 4 && MemoryMiB == PreviousDefaultMemoryMiB)
+            {
+                MemoryMiB = DefaultMemoryMiB;
+            }
 
-            MemoryMiB = Clamp(MemoryMiB <= 0 ? 2048 : MemoryMiB, 256, 32768);
+            SchemaVersion = 4;
+
+            MemoryMiB = Clamp(MemoryMiB <= 0 ? DefaultMemoryMiB : MemoryMiB, 256, 32768);
             DiskMiB = Clamp(DiskMiB <= 0 ? 16384 : DiskMiB, 1024, 262144);
             DesktopWidth = Clamp(DesktopWidth <= 0 ? 1024 : DesktopWidth, 640, 2560);
             DesktopHeight = Clamp(DesktopHeight <= 0 ? 768 : DesktopHeight, 480, 1600);
@@ -101,6 +108,7 @@ namespace YlvaOS
         public string AssetsDirectory { get; set; }
         public string ToolsDirectory { get; set; }
         public string ImportDirectory { get; set; }
+        public string UpdateDirectory { get; set; }
         public string DiskPath { get; set; }
         public string KernelPath { get; set; }
         public string InitrdPath { get; set; }

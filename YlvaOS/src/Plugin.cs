@@ -1,6 +1,7 @@
 using System.Collections;
 using BepInEx;
 using BepInEx.Logging;
+using HarmonyLib;
 
 namespace YlvaOS
 {
@@ -8,11 +9,22 @@ namespace YlvaOS
     public sealed class Plugin : BaseUnityPlugin
     {
         internal static ManualLogSource Log { get; private set; }
+        private Harmony harmony;
 
         private void Awake()
         {
             Log = Logger;
             YlvaSessionManager.Initialize(Logger);
+
+            try
+            {
+                harmony = new Harmony(ModInfo.Guid);
+                harmony.PatchAll(typeof(Plugin).Assembly);
+            }
+            catch (System.Exception ex)
+            {
+                Logger.LogError("YlvaOS Harmony patches failed: " + ex);
+            }
 
             Logger.LogInfo("Ylva OS loaded.");
         }
@@ -54,6 +66,15 @@ namespace YlvaOS
 
         private void OnDestroy()
         {
+            try
+            {
+                harmony?.UnpatchSelf();
+            }
+            catch (System.Exception ex)
+            {
+                Logger.LogError("YlvaOS Harmony unpatch failed: " + ex);
+            }
+
             if (YlvaSessionManager.Instance != null)
             {
                 YlvaSessionManager.Instance.StopVm();

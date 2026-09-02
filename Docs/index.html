@@ -184,6 +184,10 @@
       overflow: auto;
     }
 
+    pre[aria-label="YlvaOS splash"] {
+      color: var(--blue);
+    }
+
     .note {
       border-left: 3px solid var(--amber);
       background: rgba(255, 201, 120, 0.08);
@@ -230,16 +234,17 @@
         <h1>YlvaOS</h1>
         <p class="lead">Elin内のコンピューター家具から起動する、実Linux VMベースの小さなOSです。テキストコンソール、軽量デスクトップ、Wine、任意ネットワーク接続を備えています。</p>
       </div>
-      <pre aria-label="YlvaOS splash">+----------------------------------+
-|  Elin computer  ->  YlvaOS      |
-|  ver 0.1.0       real Linux VM  |
-|  console / desktop / Wine       |
-+----------------------------------+</pre>
+      <pre aria-label="YlvaOS splash">-----------------------------
+ ^           Ylva OS
+(  * *)   by aoi_nasuko
+-----------------------------
+Alpine Linux 3.24.1 base / YlvaOS 0.01</pre>
     </div>
     <nav class="wrap" aria-label="ページ内ナビゲーション">
       <a href="#start">はじめる</a>
       <a href="#commands">コマンド</a>
       <a href="#desktop">Desktop</a>
+      <a href="#roadmap">Roadmap</a>
       <a href="#elona">Elona</a>
       <a href="#network">Network</a>
       <a href="#paths">保存場所</a>
@@ -276,12 +281,22 @@
         <div>デスクトップからテキストコンソールへ戻ります。デスクトップ端末内で実行できます。</div>
         <div>Terminal [title]</div>
         <div>デスクトップ上にYlvaOS Terminalを開きます。右クリックメニューや <code>Ctrl+Alt+T</code> でも起動できます。</div>
+        <div>Settings</div>
+        <div>YlvaOS Settingsを開きます。メモリ、ディスク、解像度、FPS、音声、ネットワークを操作できます。</div>
+        <div>Files [path]</div>
+        <div>File Managerを開きます。home、Import、Documents、Downloadsなどを指定できます。</div>
         <div>YlvaOS status</div>
         <div>YlvaOSの状態とLinux kernel情報を表示します。</div>
+        <div>YlvaOS update</div>
+        <div>MOD同梱の更新ドライブを確認し、YlvaOSのバージョンが上がっていればOS管理ファイルを更新して再起動します。</div>
         <div>YlvaOS set memory &lt;MiB&gt;</div>
         <div>VMのメモリ割り当てを変更します。反映はYlvaOS再起動後です。例: <code>YlvaOS set memory 4096</code></div>
         <div>YlvaOS set disk &lt;MiB&gt;</div>
         <div>仮想ディスクの目標サイズを拡張します。縮小はできません。反映は次回VM起動時です。</div>
+        <div>YlvaOS set desktop &lt;WxH&gt;</div>
+        <div>デスクトップ解像度を変更します。反映はYlvaOS再起動後です。例: <code>YlvaOS set desktop 1280x720</code></div>
+        <div>YlvaOS set fps &lt;FPS&gt;</div>
+        <div>デスクトップ描画更新の目標FPSを変更します。反映はYlvaOS再起動後です。</div>
         <div>ConnectNetwork</div>
         <div>英語のリスク警告を表示し、<code>yes</code> と入力した場合だけ、そのVMセッションでインターネット接続を有効化します。</div>
         <div>YlvaOS setup wine</div>
@@ -301,8 +316,29 @@
         <li><code>Ctrl+Alt+T</code>: YlvaOS Terminalを開く</li>
         <li><code>Ctrl+Alt+K</code>: テキストコンソールへ戻る</li>
         <li><code>Ctrl+V</code>: ホストのクリップボード文字列をYlvaOSへ貼り付ける</li>
+        <li>ウィンドウの最小化、最大化、閉じる: Openboxのタイトルバー上のボタンを使用</li>
         <li><code>X</code>ボタン: YlvaOSウィンドウを閉じる</li>
       </ul>
+    </section>
+
+    <section id="roadmap">
+      <h2>一般OS機能の候補</h2>
+      <p>今後はElonaやElin専用機能ではなく、軽量デスクトップOSとして便利な機能を優先して追加する方針です。</p>
+      <div class="grid">
+        <div class="card">
+          <strong>設定と復旧</strong>
+          YlvaOS Settingsは初期実装済みです。次はSnapshot / Restore、Repair Modeを優先候補にします。
+        </div>
+        <div class="card">
+          <strong>日常操作</strong>
+          File Managerは初期実装済みです。次はApplication Launcher、Text Editor、Archive Managerを追加候補にします。
+        </div>
+        <div class="card">
+          <strong>状態確認</strong>
+          System Monitor、Audio Mixer、Display Settings、Notification Areaを検討します。
+        </div>
+      </div>
+      <p>詳細は <a href="YlvaOS_General_Desktop_Feature_Ideas.md">YlvaOS General Desktop Feature Ideas</a> を参照してください。</p>
     </section>
 
     <section id="elona">
@@ -341,10 +377,11 @@ doas apk add &lt;package&gt;</pre>
 ├─ vm\disk.qcow2
 ├─ vm\assets\vmlinuz
 ├─ vm\assets\initrd.img
+├─ vm\update\  (MOD同梱側のみ)
 ├─ Tools\qemu\
 └─ Import\</pre>
       <p>YlvaOSからホスト全体へアクセスする経路は用意していません。Importフォルダだけを読み取り専用で渡します。</p>
-      <p class="note">rootfs更新後も既存の <code>vm\disk.qcow2</code> は自動上書きされません。日本語表示や音声設定の変更を取り込むには、必要なデータをバックアップしてから既存ディスクを削除し、同梱root diskを再展開してください。</p>
+      <p class="note">MOD更新後はYlvaOS内で <code>YlvaOS update</code> を実行してください。既存の <code>vm\disk.qcow2</code> は自動上書きせず、同梱update payloadからYlvaOS管理ファイルだけを更新します。</p>
     </section>
 
     <section id="distribution">
@@ -359,7 +396,7 @@ doas apk add &lt;package&gt;</pre>
   </main>
 
   <footer class="wrap">
-    YlvaOS 0.1.0 / Elin MOD by aoi_nasuko
+    YlvaOS 0.01 / Elin MOD by aoi_nasuko
   </footer>
 </body>
 </html>

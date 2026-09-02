@@ -197,6 +197,8 @@ class HostInputServer:
 class AudioServer:
     def __init__(self):
         self.byte_count = 0
+        self.signal_samples = 0
+        self.max_abs_sample = 0
         self.lock = threading.Lock()
         self.stop_event = threading.Event()
         self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -226,6 +228,24 @@ class AudioServer:
             seen = self.byte_count
         raise TimeoutError(f"Timed out waiting for {minimum} audio bytes; received {seen}")
 
+    def reset_signal(self) -> None:
+        with self.lock:
+            self.signal_samples = 0
+            self.max_abs_sample = 0
+
+    def wait_for_signal(self, minimum_samples: int, timeout: int) -> None:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            with self.lock:
+                if self.signal_samples >= minimum_samples:
+                    return
+            time.sleep(0.2)
+        with self.lock:
+            seen = self.signal_samples
+            peak = self.max_abs_sample
+            byte_count = self.byte_count
+        raise TimeoutError(f"Timed out waiting for {minimum_samples} non-silent audio samples; received {seen}, peak {peak}, bytes {byte_count}")
+
     def _accept_loop(self) -> None:
         while not self.stop_event.is_set():
             try:
@@ -235,6 +255,7 @@ class AudioServer:
             threading.Thread(target=self._read_client, args=(client,), daemon=True).start()
 
     def _read_client(self, client: socket.socket) -> None:
+        carry = b""
         with client:
             while not self.stop_event.is_set():
                 try:
@@ -243,8 +264,25 @@ class AudioServer:
                     return
                 if not data:
                     return
+                payload = carry + data
+                if len(payload) % 2:
+                    carry = payload[-1:]
+                    payload = payload[:-1]
+                else:
+                    carry = b""
+                signal_samples = 0
+                max_abs_sample = 0
+                for (sample,) in struct.iter_unpack("<h", payload):
+                    absolute = abs(sample)
+                    if absolute > max_abs_sample:
+                        max_abs_sample = absolute
+                    if absolute > 256:
+                        signal_samples += 1
                 with self.lock:
                     self.byte_count += len(data)
+                    self.signal_samples += signal_samples
+                    if max_abs_sample > self.max_abs_sample:
+                        self.max_abs_sample = max_abs_sample
 
 
 class VncProbe:
@@ -632,6 +670,7 @@ def main() -> int:
     kernel = root / "Mod_YlvaOS" / "vm" / "assets" / "vmlinuz"
     initrd = root / "Mod_YlvaOS" / "vm" / "assets" / "initrd.img"
     disk = prepare_disk(root, args.copy_disk)
+    update_dir = root / "Mod_YlvaOS" / "vm" / "update"
     import_dir = root / "_work" / "ylvaos-import-test"
     if import_dir.exists():
         shutil.rmtree(import_dir)
@@ -667,7 +706,7 @@ def main() -> int:
         [
             str(qemu),
             "-m",
-            "2048",
+            "4096",
             "-machine",
             "accel=tcg",
             "-cpu",
@@ -700,6 +739,8 @@ def main() -> int:
             f"file={disk},if=virtio,format=qcow2",
             "-drive",
             f"file=fat:ro:{import_dir.as_posix()},if=virtio,format=raw,media=disk,readonly=on",
+            "-drive",
+            f"file=fat:ro:{update_dir.as_posix()},if=virtio,format=raw,media=disk,readonly=on",
             "-device",
             "virtio-serial-pci",
             "-chardev",
@@ -735,17 +776,20 @@ def main() -> int:
         qmp.connect()
         console.wait_for_any(["YlvaOS:~$"], 180)
         snapshot = console_snapshot(console)
-        if "__   __ _             ___  ____" not in snapshot or "ver 0.1.0" not in snapshot:
+        if "^           Ylva OS" not in snapshot or "(  * *)   by aoi_nasuko" not in snapshot or "Alpine Linux 3.24.1 base / YlvaOS 0.01" not in snapshot:
             raise RuntimeError("YlvaOS login splash was not printed")
         width, height = probe.read_framebuffer_size()
         print(f"[vnc] framebuffer {width}x{height}")
         if width <= 0 or height <= 0:
             raise RuntimeError("VNC framebuffer has an invalid size")
-        run_command(console, "command -v Desktop && command -v Kernel && command -v ConnectNetwork && command -v ylva-splash && command -v ylva-host-agent", "YlvaOS:~$", 60)
+        run_command(console, "command -v Desktop && command -v Kernel && command -v ConnectNetwork && command -v Settings && command -v Files && command -v pcmanfm && command -v mc && command -v dialog && command -v ylva-splash && command -v ylva-host-agent && test -x /usr/lib/ylvaos/update-from-mod", "YlvaOS:~$", 60)
         snapshot = console_snapshot(console)
-        for path in ["/usr/bin/Desktop", "/usr/bin/Kernel", "/usr/bin/ConnectNetwork", "/usr/bin/ylva-splash", "/usr/bin/ylva-host-agent"]:
+        for path in ["/usr/bin/Desktop", "/usr/bin/Kernel", "/usr/bin/ConnectNetwork", "/usr/bin/Settings", "/usr/bin/Files", "/usr/bin/pcmanfm", "/usr/bin/mc", "/usr/bin/dialog", "/usr/bin/ylva-splash", "/usr/bin/ylva-host-agent"]:
             if path not in snapshot:
                 raise RuntimeError(f"{path} was not found in the guest")
+        run_command(console, "YlvaOS update", "YlvaOS:~$", 40)
+        if "YlvaOS is already up to date." not in console_snapshot(console):
+            raise RuntimeError("YlvaOS update did not detect the bundled same-version payload")
         run_command(
             console,
             "printf 'no\\n' | ConnectNetwork; printf '\\137\\137YLVA_NETWORK_CANCEL_DONE\\137\\137\\n'",
@@ -790,7 +834,7 @@ def main() -> int:
             raise RuntimeError("apk update failed after ConnectNetwork")
         run_command(
             console,
-            "for cmd in wine pactl speaker-test YlvaOS; do command -v \"$cmd\"; done; "
+            "for cmd in wine pactl pacat parec speaker-test YlvaOS Settings Files pcmanfm mc dialog; do command -v \"$cmd\"; done; "
             "for path in /usr/lib/ylvaos/setup-audio /usr/lib/ylvaos/setup-font /usr/lib/ylvaos/setup-wine; do test -x \"$path\" && echo \"$path\"; done; "
             "! command -v ylva-audio-test >/dev/null 2>&1 && "
             "! command -v ylva-configure-wine >/dev/null 2>&1 && "
@@ -805,8 +849,15 @@ def main() -> int:
         for path in [
             "/usr/bin/wine",
             "/usr/bin/pactl",
+            "/usr/bin/pacat",
+            "/usr/bin/parec",
             "/usr/bin/speaker-test",
             "/usr/bin/YlvaOS",
+            "/usr/bin/Settings",
+            "/usr/bin/Files",
+            "/usr/bin/pcmanfm",
+            "/usr/bin/mc",
+            "/usr/bin/dialog",
             "/usr/lib/ylvaos/setup-audio",
             "/usr/lib/ylvaos/setup-font",
             "/usr/lib/ylvaos/setup-wine",
@@ -833,13 +884,14 @@ def main() -> int:
         snapshot = console_snapshot(console)
         if "__YLVA_WINE_CONFIGURED__" not in snapshot or "932" not in snapshot or "Noto Sans CJK JP" not in snapshot:
             raise RuntimeError("Wine Japanese locale/font configuration did not complete")
+        audio.reset_signal()
         run_command(
             console,
-            "timeout 15 sh -c '. /usr/lib/ylvaos/wine-env; speaker-test -D default -c 2 -r 44100 -F S16_LE -t sine -f 440 -l 1' >/tmp/ylva-audio-test.log 2>&1; echo __YLVA_AUDIO_TEST_DONE__",
+            "timeout 15 sh -c '. /usr/lib/ylvaos/wine-env; dd if=/dev/urandom bs=4096 count=128 2>/dev/null | pacat --playback --device=ylva --format=s16le --rate=44100 --channels=2' >/tmp/ylva-audio-test.log 2>&1; echo __YLVA_AUDIO_TEST_DONE__",
             "YlvaOS:~$",
             30,
         )
-        audio.wait_for_bytes(4096, 30)
+        audio.wait_for_signal(1024, 30)
         run_command(
             console,
             mount_import_command("cat ~/Import/ylva-import-test.txt"),
@@ -866,10 +918,44 @@ def main() -> int:
         snapshot = console_snapshot(console)
         if "__YLVA_X_READY__" not in snapshot:
             raise RuntimeError("Xorg did not create /tmp/.X11-unix/X0")
+        run_command(
+            console,
+            "grep -q 'context name=\"Close\"' ~/.config/openbox/rc.xml && "
+            "grep -q 'action name=\"Close\"' ~/.config/openbox/rc.xml && "
+            "grep -q 'context name=\"Iconify\"' ~/.config/openbox/rc.xml && "
+            "grep -q 'action name=\"Iconify\"' ~/.config/openbox/rc.xml && "
+            "grep -q 'context name=\"Maximize\"' ~/.config/openbox/rc.xml && "
+            "grep -q 'action name=\"ToggleMaximize\"' ~/.config/openbox/rc.xml && "
+            "echo __YLVA_WINDOW_BUTTON_BINDS_OK__",
+            "YlvaOS:~$",
+            30,
+        )
+        snapshot = console_snapshot(console)
+        if "__YLVA_WINDOW_BUTTON_BINDS_OK__" not in snapshot:
+            raise RuntimeError("Openbox window button mouse bindings were not generated")
         run_command(console, "DISPLAY=:0 xdotool search --name 'YlvaOS Terminal' | head -n 1 >/tmp/ylva-terminal-window; test -s /tmp/ylva-terminal-window && echo __YLVA_TERMINAL_VISIBLE__", "YlvaOS:~$", 30)
         snapshot = console_snapshot(console)
         if "__YLVA_TERMINAL_VISIBLE__" not in snapshot:
             raise RuntimeError("Initial desktop terminal was not visible")
+        run_command(console, "DISPLAY=:0 Settings; sleep 2; DISPLAY=:0 xdotool search --name 'YlvaOS Settings' | head -n 1 >/tmp/ylva-settings-window; test -s /tmp/ylva-settings-window && echo __YLVA_SETTINGS_VISIBLE__", "YlvaOS:~$", 30)
+        snapshot = console_snapshot(console)
+        if "__YLVA_SETTINGS_VISIBLE__" not in snapshot:
+            raise RuntimeError("YlvaOS Settings did not open on the desktop")
+        run_command(console, "DISPLAY=:0 Files; sleep 3; pgrep -fa '[p]cmanfm|[m]c' >/tmp/ylva-files-processes; test -s /tmp/ylva-files-processes && cat /tmp/ylva-files-processes && echo __YLVA_FILES_OPENED__", "YlvaOS:~$", 30)
+        snapshot = console_snapshot(console)
+        if "__YLVA_FILES_OPENED__" not in snapshot:
+            raise RuntimeError("YlvaOS File Manager did not start")
+        run_command(
+            console,
+            "YlvaOS set desktop 800x600; YlvaOS set fps 20; echo __YLVA_DISPLAY_SETTINGS_SENT__",
+            "YlvaOS:~$",
+            30,
+        )
+        control.wait_for("set desktop 800 600", 10)
+        control.wait_for("set fps 20", 10)
+        snapshot = console_snapshot(console)
+        if "__YLVA_DISPLAY_SETTINGS_SENT__" not in snapshot:
+            raise RuntimeError("YlvaOS display settings command did not complete")
         run_command(
             console,
             "DISPLAY=:0 sh -c 'win=$(xdotool search --name \"YlvaOS Terminal\" | tail -n 1); xdotool windowactivate \"$win\" windowfocus \"$win\"'",

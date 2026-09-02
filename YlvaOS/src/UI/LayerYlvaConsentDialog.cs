@@ -212,7 +212,7 @@ namespace YlvaOS
         private const string JapaneseWarningText =
             "\"YlvaOS\"がインストールされました。このMODは同梱されているファイルの都合上、Windowsでのみ動作します。\n" +
             "\n" +
-            "＊このMODは実際にPC上でLinux互換のOSを動かすMODです、このMODを使用したことによる損害は、aoi_nasukoは一切受け付けません。Linux、あるいは派生OSが理解できる方のみご利用することを強くお勧めします＊\n" +
+            "＊このMODは実際にPC上でLinux互換のOSを動かすMODです、このMODを使用したことによる損害や責任は、aoi_nasukoは一切受け付けません。Linux、あるいは派生OSが理解できる方のみご利用することを強くお勧めします＊\n" +
             "\n" +
             "このMODを使用するためには、上記の注意文に同意してください。";
 

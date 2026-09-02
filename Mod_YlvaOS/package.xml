@@ -6,6 +6,6 @@
   <author>aoi_nasuko</author>
   <builtin>false</builtin>
   <loadPriority>99999999</loadPriority>
-  <version>0.23.340.3</version>
+  <version>0.23.340</version>
   <description>Using a computer allows you to boot up the operating system that you can actually use.</description>
 </Meta>

@@ -91,6 +91,7 @@ def main() -> int:
     qemu = root / "Mod_YlvaOS" / "Tools" / "qemu" / "qemu-system-x86_64.exe"
     kernel = root / "Mod_YlvaOS" / "vm" / "assets" / "vmlinuz"
     initrd = root / "Mod_YlvaOS" / "vm" / "assets" / "initrd.img"
+    update_dir = root / "Mod_YlvaOS" / "vm" / "update"
     test_user = "aoi_nasuko"
     test_password = "ylva"
     password_b64 = base64.b64encode(test_password.encode("utf-8")).decode("ascii")
@@ -104,7 +105,7 @@ def main() -> int:
         [
             str(qemu),
             "-m",
-            "1024",
+            "4096",
             "-machine",
             "accel=tcg",
             "-cpu",
@@ -122,6 +123,8 @@ def main() -> int:
             "none",
             "-drive",
             f"file={disk},if=virtio,format=qcow2",
+            "-drive",
+            f"file=fat:ro:{update_dir.as_posix()},if=virtio,format=raw,media=disk,readonly=on",
             "-kernel",
             str(kernel),
             "-initrd",
@@ -140,11 +143,17 @@ def main() -> int:
         matched = console.wait_for_any(["YlvaOS:~$", "can't access tty", "Kernel panic"], 180)
         if matched != "YlvaOS:~$":
             return 1
+        with console.lock:
+            snapshot = console.text
+        if "^           Ylva OS" not in snapshot or "(  * *)   by aoi_nasuko" not in snapshot or "Alpine Linux 3.24.1 base / YlvaOS 0.01" not in snapshot:
+            raise RuntimeError("YlvaOS login splash was not printed")
         time.sleep(1)
         console.send('echo __YLVA_USER__$(whoami)__END__')
         console.wait_for_any([f"__YLVA_USER__{test_user}__END__"], 30)
         console.send("YlvaOS set memory 3072")
         console.wait_for_any(["YlvaOS memory target set to 3072 MiB"], 30)
+        console.send("YlvaOS update")
+        console.wait_for_any(["YlvaOS is already up to date."], 30)
         console.send("vim --version | head -n 1")
         console.wait_for_any(["VIM - Vi IMproved"], 30)
         try:

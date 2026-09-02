@@ -42,6 +42,10 @@
       <HintPath>D:\Game\SteamLibrary\steamapps\common\Elin\BepInEx\core\BepInEx.Unity.dll</HintPath>
       <Private>False</Private>
     </Reference>
+    <Reference Include="0Harmony">
+      <HintPath>D:\Game\SteamLibrary\steamapps\common\Elin\BepInEx\core\0Harmony.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
     <Reference Include="Elin">
       <HintPath>D:\Game\SteamLibrary\steamapps\common\Elin\Elin_Data\Managed\Elin.dll</HintPath>
       <Private>False</Private>

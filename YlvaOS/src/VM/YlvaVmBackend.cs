@@ -104,6 +104,7 @@ namespace YlvaOS
             builder.AppendLine("  tools:  " + paths.ToolsDirectory);
             builder.AppendLine("  disk:   " + paths.DiskPath + "  " + (File.Exists(paths.DiskPath) ? "[OK]" : "[missing]"));
             builder.AppendLine("  import: " + paths.ImportDirectory + "  [read-only guest drive]");
+            builder.AppendLine("  update: " + paths.UpdateDirectory + "  " + (Directory.Exists(paths.UpdateDirectory) ? "[OK]" : "[missing]"));
             builder.AppendLine("Required files:");
             builder.AppendLine("  " + paths.QemuSystemPath + "  " + (File.Exists(paths.QemuSystemPath) ? "[OK]" : "[missing]"));
             builder.AppendLine("  " + paths.QemuImgPath + "  " + (File.Exists(paths.QemuImgPath) ? "[OK]" : "[missing]"));
@@ -136,10 +137,12 @@ namespace YlvaOS
 
                 int copiedAssets = CopyDirectoryIfPresent(
                     Path.Combine(pluginDirectory ?? string.Empty, "vm", "assets"),
-                    paths.AssetsDirectory);
+                    paths.AssetsDirectory,
+                    overwriteChanged: true);
                 copiedAssets += CopyDirectoryIfPresent(
                     Path.Combine(pluginDirectory ?? string.Empty, "Assets", "vm"),
-                    paths.AssetsDirectory);
+                    paths.AssetsDirectory,
+                    overwriteChanged: true);
                 if (copiedAssets > 0)
                 {
                     result.Actions.Add("Copied " + copiedAssets + " Linux boot asset file(s) from the MOD package.");
@@ -199,6 +202,21 @@ namespace YlvaOS
             }
 
             config.DiskMiB = diskMiB;
+            config.Normalize();
+            SaveConfig();
+        }
+
+        public void SetDesktopSize(int width, int height)
+        {
+            config.DesktopWidth = width;
+            config.DesktopHeight = height;
+            config.Normalize();
+            SaveConfig();
+        }
+
+        public void SetDesktopRefreshFps(int fps)
+        {
+            config.DesktopRefreshFps = fps;
             config.Normalize();
             SaveConfig();
         }
@@ -635,7 +653,10 @@ namespace YlvaOS
                 paths.DiskPath + "\n" +
                 "\n" +
                 "Files placed here are exposed to the guest as a read-only import drive:\n" +
-                paths.ImportDirectory + "\n";
+                paths.ImportDirectory + "\n" +
+                "\n" +
+                "Bundled YlvaOS update payload exposed read-only to the guest:\n" +
+                paths.UpdateDirectory + "\n";
 
             File.WriteAllText(Path.Combine(rootDirectory, "SETUP.txt"), text);
         }
@@ -646,6 +667,9 @@ namespace YlvaOS
             string assetsDirectory = Path.Combine(vmDirectory, "assets");
             string toolsDirectory = Path.Combine(rootDirectory, "Tools", "qemu");
             string importDirectory = Path.Combine(rootDirectory, "Import");
+            string updateDirectory = PreferExistingDirectory(
+                Path.Combine(pluginDirectory ?? string.Empty, "vm", "update"),
+                Path.Combine(pluginDirectory ?? string.Empty, "Assets", "vm", "update"));
             string pluginToolsDirectory = Path.Combine(pluginDirectory ?? string.Empty, "Tools", "qemu");
             string qemuSystem = PreferExisting(
                 Path.Combine(toolsDirectory, "qemu-system-x86_64.exe"),
@@ -662,6 +686,7 @@ namespace YlvaOS
                 AssetsDirectory = assetsDirectory,
                 ToolsDirectory = toolsDirectory,
                 ImportDirectory = importDirectory,
+                UpdateDirectory = updateDirectory,
                 DiskPath = ConfinedPath(vmDirectory, config.DiskFileName),
                 KernelPath = ConfinedPath(assetsDirectory, config.KernelFileName),
                 InitrdPath = ConfinedPath(assetsDirectory, config.InitrdFileName),
@@ -852,6 +877,9 @@ namespace YlvaOS
         private ProcessStartInfo CreateQemuStartInfo(YlvaVmPaths paths)
         {
             string append = EscapeAppend(config.KernelAppend) + BuildGuestKernelArgs();
+            string updateDriveArgument = Directory.Exists(paths.UpdateDirectory)
+                ? " -drive file=\"fat:ro:" + ToQemuPath(paths.UpdateDirectory) + "\",if=virtio,format=raw,media=disk,readonly=on"
+                : string.Empty;
             string args =
                 "-m " + config.MemoryMiB +
                 " -machine accel=tcg" +
@@ -867,10 +895,10 @@ namespace YlvaOS
                 " -serial stdio" +
                 " -monitor none" +
                 " -qmp tcp:127.0.0.1:" + qmpPort + ",server=on,wait=off" +
-                " -no-reboot" +
                 " -net none" +
                 " -drive file=\"" + paths.DiskPath + "\",if=virtio,format=qcow2" +
                 " -drive file=\"fat:ro:" + ToQemuPath(paths.ImportDirectory) + "\",if=virtio,format=raw,media=disk,readonly=on" +
+                updateDriveArgument +
                 " -device virtio-serial-pci" +
                 " -chardev socket,id=ylva_ctl,host=127.0.0.1,port=" + (controlServer != null ? controlServer.Port : 0) + ",server=off,reconnect-ms=1000" +
                 " -device virtserialport,chardev=ylva_ctl,name=org.ylvaos.control" +
@@ -1118,7 +1146,17 @@ namespace YlvaOS
             return secondary;
         }
 
-        private static int CopyDirectoryIfPresent(string sourceDirectory, string destinationDirectory)
+        private static string PreferExistingDirectory(string primary, string secondary)
+        {
+            if (Directory.Exists(primary))
+            {
+                return primary;
+            }
+
+            return secondary;
+        }
+
+        private static int CopyDirectoryIfPresent(string sourceDirectory, string destinationDirectory, bool overwriteChanged = false)
         {
             if (string.IsNullOrEmpty(sourceDirectory) || !Directory.Exists(sourceDirectory))
             {
@@ -1135,14 +1173,47 @@ namespace YlvaOS
 
                 if (File.Exists(destinationPath))
                 {
-                    continue;
+                    if (!overwriteChanged || FilesAreEqual(sourcePath, destinationPath))
+                    {
+                        continue;
+                    }
                 }
 
-                File.Copy(sourcePath, destinationPath);
+                File.Copy(sourcePath, destinationPath, overwriteChanged);
                 copied++;
             }
 
             return copied;
+        }
+
+        private static bool FilesAreEqual(string left, string right)
+        {
+            FileInfo leftInfo = new FileInfo(left);
+            FileInfo rightInfo = new FileInfo(right);
+            if (leftInfo.Length != rightInfo.Length)
+            {
+                return false;
+            }
+
+            using (SHA256 sha = SHA256.Create())
+            using (FileStream leftStream = File.OpenRead(left))
+            using (FileStream rightStream = File.OpenRead(right))
+            {
+                byte[] leftHash = sha.ComputeHash(leftStream);
+                byte[] rightHash = sha.ComputeHash(rightStream);
+                if (leftHash.Length != rightHash.Length)
+                {
+                    return false;
+                }
+
+                int diff = 0;
+                for (int i = 0; i < leftHash.Length; i++)
+                {
+                    diff |= leftHash[i] ^ rightHash[i];
+                }
+
+                return diff == 0;
+            }
         }
 
         private static string ConfinedPath(string directory, string fileName)

@@ -1103,6 +1103,10 @@ namespace YlvaOS
                 audioSource.playOnAwake = false;
                 audioSource.loop = true;
                 audioSource.spatialBlend = 0f;
+                audioSource.ignoreListenerPause = true;
+                audioSource.mute = false;
+                audioSource.priority = 0;
+                audioSource.dopplerLevel = 0f;
                 audioSource.volume = 1f;
                 audioClip = AudioClip.Create(
                     "YlvaOS VM Audio",

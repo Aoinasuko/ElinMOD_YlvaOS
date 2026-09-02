@@ -124,15 +124,15 @@ namespace YlvaOS
             {
                 if (IsVmConsoleActive)
                 {
-                    return "YlvaOS 0.1.0 - Real Linux console - " + CurrentUserName;
+                    return "YlvaOS 0.01 - Real Linux console - " + CurrentUserName;
                 }
 
                 if (IsDesktopMode)
                 {
-                    return "YlvaOS 0.1.0 - Lightweight Desktop - " + CurrentUserName;
+                    return "YlvaOS 0.01 - Lightweight Desktop - " + CurrentUserName;
                 }
 
-                return "YlvaOS 0.1.0 - Login";
+                return "YlvaOS 0.01 - Login";
             }
         }
 
@@ -461,6 +461,7 @@ namespace YlvaOS
             Append("YlvaOS host-side commands available before the real Linux VM starts:");
             Append("  vm status | vm paths | vm start | vm stop");
             Append("  YlvaOS set memory <MiB> | YlvaOS set disk <MiB>");
+            Append("  YlvaOS set desktop <WxH> | YlvaOS set fps <FPS>");
             Append("  clear | reboot | shutdown | poweroff | exit");
             Append("After the VM boots, Linux commands run inside the guest OS.");
         }
@@ -522,7 +523,31 @@ namespace YlvaOS
                 return;
             }
 
-            throw new YlvaUserException("usage: YlvaOS status | YlvaOS set memory <MiB> | YlvaOS set disk <MiB>");
+            if (args.Length == 4 && args[1] == "set" && (args[2] == "desktop" || args[2] == "resolution"))
+            {
+                int width;
+                int height;
+                ParseDesktopSize(args[3], out width, out height);
+                vm.SetDesktopSize(width, height);
+                Append("YlvaOS desktop target set to " + vm.Config.DesktopWidth + "x" + vm.Config.DesktopHeight + ". Reboot YlvaOS to apply.");
+                return;
+            }
+
+            if (args.Length == 5 && args[1] == "set" && (args[2] == "desktop" || args[2] == "resolution"))
+            {
+                vm.SetDesktopSize(ParsePositiveInt(args[3], "desktop width"), ParsePositiveInt(args[4], "desktop height"));
+                Append("YlvaOS desktop target set to " + vm.Config.DesktopWidth + "x" + vm.Config.DesktopHeight + ". Reboot YlvaOS to apply.");
+                return;
+            }
+
+            if (args.Length == 4 && args[1] == "set" && (args[2] == "fps" || args[2] == "framerate"))
+            {
+                vm.SetDesktopRefreshFps(ParsePositiveInt(args[3], "desktop fps"));
+                Append("YlvaOS desktop refresh target set to " + vm.Config.DesktopRefreshFps + " fps. Reboot YlvaOS to apply.");
+                return;
+            }
+
+            throw new YlvaUserException("usage: YlvaOS status | YlvaOS set memory <MiB> | YlvaOS set disk <MiB> | YlvaOS set desktop <WxH> | YlvaOS set fps <FPS>");
         }
 
         private void AppendVmStatus()
@@ -685,6 +710,18 @@ namespace YlvaOS
                     return;
                 }
 
+                if (parts.Length == 4 && parts[0] == "set" && (parts[1] == "desktop" || parts[1] == "resolution"))
+                {
+                    vm.SetDesktopSize(ParsePositiveInt(parts[2], "desktop width"), ParsePositiveInt(parts[3], "desktop height"));
+                    return;
+                }
+
+                if (parts.Length == 3 && parts[0] == "set" && (parts[1] == "fps" || parts[1] == "framerate"))
+                {
+                    vm.SetDesktopRefreshFps(ParsePositiveInt(parts[2], "desktop fps"));
+                    return;
+                }
+
                 if (parts.Length == 2 && parts[0] == "network" && parts[1] == "connect")
                 {
                     string message;
@@ -745,6 +782,21 @@ namespace YlvaOS
             }
 
             return parsed;
+        }
+
+        private static void ParseDesktopSize(string value, out int width, out int height)
+        {
+            width = 0;
+            height = 0;
+            string[] parts = (value ?? string.Empty).ToLowerInvariant().Split('x');
+            if (parts.Length != 2 ||
+                !int.TryParse(parts[0], out width) ||
+                !int.TryParse(parts[1], out height) ||
+                width <= 0 ||
+                height <= 0)
+            {
+                throw new YlvaUserException("desktop size must be formatted like 1024x768");
+            }
         }
 
         private bool VerifyPassword(string password)
