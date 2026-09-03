@@ -113,6 +113,7 @@
     <Compile Include="src\VM\YlvaAudioServer.cs" />
     <Compile Include="src\VM\YlvaHostInputServer.cs" />
     <Compile Include="src\VM\YlvaQmpClient.cs" />
+    <Compile Include="src\VM\YlvaSnapshotManager.cs" />
     <Compile Include="src\VM\YlvaVmConfig.cs" />
     <Compile Include="src\VM\YlvaVmBackend.cs" />
     <Compile Include="src\VM\YlvaVncClient.cs" />

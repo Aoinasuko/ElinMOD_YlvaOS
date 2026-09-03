@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.IO.Compression;
 using System.Net;
@@ -36,6 +37,8 @@ namespace YlvaOS
         private bool exitedSinceLastStart;
         private bool networkConnected;
         private int desktopPointerButtonMask;
+        private DateTime hostStatsSampleUtc;
+        private TimeSpan hostStatsSampleCpu;
 
         public YlvaVmBackend(string rootDirectory, string pluginDirectory, ManualLogSource log)
         {
@@ -104,6 +107,7 @@ namespace YlvaOS
             builder.AppendLine("  assets: " + paths.AssetsDirectory);
             builder.AppendLine("  tools:  " + paths.ToolsDirectory);
             builder.AppendLine("  disk:   " + paths.DiskPath + "  " + (File.Exists(paths.DiskPath) ? "[OK]" : "[missing]"));
+            builder.AppendLine("  snapshots: " + paths.SnapshotDirectory + "  [root disk snapshots]");
             builder.AppendLine("  import: " + paths.ImportDirectory + "  [read-only guest drive]");
             builder.AppendLine("  update: " + paths.UpdateDirectory + "  " + (Directory.Exists(paths.UpdateDirectory) ? "[OK]" : "[missing]"));
             builder.AppendLine("Required files:");
@@ -382,6 +386,16 @@ namespace YlvaOS
             return controlServer.DrainMessages(handle, maxMessages);
         }
 
+        public int DrainControlMessages(Action<YlvaControlMessage> handle, int maxMessages)
+        {
+            if (controlServer == null)
+            {
+                return 0;
+            }
+
+            return controlServer.DrainMessages(handle, maxMessages);
+        }
+
         public bool ConsumeExitedSinceLastStart()
         {
             lock (processLock)
@@ -585,6 +599,121 @@ namespace YlvaOS
             return true;
         }
 
+        public string FormatSnapshotList()
+        {
+            return CreateSnapshotManager().FormatSnapshotList();
+        }
+
+        public string CreateSnapshot(string name, string memo)
+        {
+            YlvaSnapshotEntry entry = CreateSnapshotManager().CreateSnapshot(name, memo);
+            lastMessage = "Created YlvaOS snapshot `" + entry.Name + "`.";
+            return lastMessage + "\n" + FormatSnapshotEntry(entry);
+        }
+
+        public string RestoreSnapshot(string name)
+        {
+            YlvaSnapshotEntry entry = CreateSnapshotManager().RestoreSnapshot(name);
+            lastMessage = "Restored YlvaOS snapshot `" + entry.Name + "`.";
+            return lastMessage + "\n" + FormatSnapshotEntry(entry);
+        }
+
+        public string DeleteSnapshot(string name)
+        {
+            YlvaSnapshotEntry entry = CreateSnapshotManager().DeleteSnapshot(name);
+            lastMessage = "Deleted YlvaOS snapshot `" + entry.Name + "`.";
+            return lastMessage;
+        }
+
+        public string FormatHostRuntimeStats()
+        {
+            Process current;
+            bool connected;
+            lock (processLock)
+            {
+                current = process;
+                connected = networkConnected;
+            }
+
+            if (current == null || current.HasExited)
+            {
+                return "Host QEMU: stopped\nHost network: disconnected";
+            }
+
+            double cpuPercent = 0.0;
+            bool hasCpuPercent = false;
+            long workingSet = 0L;
+            long privateBytes = 0L;
+            try
+            {
+                current.Refresh();
+                DateTime now = DateTime.UtcNow;
+                TimeSpan cpu = current.TotalProcessorTime;
+                lock (processLock)
+                {
+                    if (hostStatsSampleUtc != DateTime.MinValue && now > hostStatsSampleUtc)
+                    {
+                        double elapsedMs = (now - hostStatsSampleUtc).TotalMilliseconds;
+                        double cpuMs = (cpu - hostStatsSampleCpu).TotalMilliseconds;
+                        if (elapsedMs > 0.0 && cpuMs >= 0.0)
+                        {
+                            cpuPercent = cpuMs * 100.0 / elapsedMs / Math.Max(1, Environment.ProcessorCount);
+                            hasCpuPercent = true;
+                        }
+                    }
+
+                    hostStatsSampleUtc = now;
+                    hostStatsSampleCpu = cpu;
+                }
+
+                workingSet = current.WorkingSet64;
+                privateBytes = current.PrivateMemorySize64;
+            }
+            catch (Exception ex)
+            {
+                return "Host QEMU: running, stats unavailable (" + ex.Message + ")\nHost network: " + (connected ? "connected" : "disconnected");
+            }
+
+            return
+                "Host QEMU: running" +
+                (hasCpuPercent ? ", CPU " + cpuPercent.ToString("0.0", CultureInfo.InvariantCulture) + "%" : ", CPU sampling") +
+                ", working set " + FormatBytes(workingSet) +
+                ", private " + FormatBytes(privateBytes) +
+                "\nHost network: " + (connected ? "connected through QEMU user-mode NAT" : "disconnected");
+        }
+
+        private YlvaSnapshotManager CreateSnapshotManager()
+        {
+            YlvaVmPaths paths = ResolvePaths();
+            return new YlvaSnapshotManager(rootDirectory, paths.DiskPath, paths.QemuImgPath, delegate { return IsRunning; });
+        }
+
+        private static string FormatSnapshotEntry(YlvaSnapshotEntry entry)
+        {
+            return
+                "Name: " + entry.Name + "\n" +
+                "Created UTC: " + entry.CreatedUtc.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture) + "\n" +
+                "Size: " + FormatBytes(entry.SizeBytes) + "\n" +
+                "YlvaOS version: " + entry.YlvaOsVersion + "\n" +
+                "Memo: " + (string.IsNullOrEmpty(entry.Memo) ? "(none)" : entry.Memo);
+        }
+
+        private static string FormatBytes(long bytes)
+        {
+            double value = Math.Max(0L, bytes);
+            string[] units = { "B", "KiB", "MiB", "GiB", "TiB" };
+            int unit = 0;
+            while (value >= 1024.0 && unit < units.Length - 1)
+            {
+                value /= 1024.0;
+                unit++;
+            }
+
+            return unit == 0
+                ? ((long)value).ToString(CultureInfo.InvariantCulture) + " B"
+                : value.ToString(value >= 10.0 ? "0.0" : "0.00", CultureInfo.InvariantCulture) + " " + units[unit];
+        }
+
         private void WarmQmpConnection()
         {
             if (qmpPort <= 0)
@@ -663,6 +792,7 @@ namespace YlvaOS
             Directory.CreateDirectory(paths.AssetsDirectory);
             Directory.CreateDirectory(paths.ToolsDirectory);
             Directory.CreateDirectory(paths.ImportDirectory);
+            Directory.CreateDirectory(paths.SnapshotDirectory);
         }
 
         private void WriteSetupReadme(YlvaVmPaths paths)
@@ -695,6 +825,9 @@ namespace YlvaOS
                 "Files placed here are exposed to the guest as a read-only import drive:\n" +
                 paths.ImportDirectory + "\n" +
                 "\n" +
+                "Root disk snapshots are stored here and are managed only by YlvaOS:\n" +
+                paths.SnapshotDirectory + "\n" +
+                "\n" +
                 "Bundled YlvaOS update payload exposed read-only to the guest:\n" +
                 paths.UpdateDirectory + "\n";
 
@@ -707,6 +840,7 @@ namespace YlvaOS
             string assetsDirectory = Path.Combine(vmDirectory, "assets");
             string toolsDirectory = Path.Combine(rootDirectory, "Tools", "qemu");
             string importDirectory = Path.Combine(rootDirectory, "Import");
+            string snapshotDirectory = Path.Combine(rootDirectory, "snapshots");
             string updateDirectory = PreferExistingDirectory(
                 Path.Combine(pluginDirectory ?? string.Empty, "vm", "update"),
                 Path.Combine(pluginDirectory ?? string.Empty, "Assets", "vm", "update"));
@@ -726,6 +860,7 @@ namespace YlvaOS
                 AssetsDirectory = assetsDirectory,
                 ToolsDirectory = toolsDirectory,
                 ImportDirectory = importDirectory,
+                SnapshotDirectory = snapshotDirectory,
                 UpdateDirectory = updateDirectory,
                 DiskPath = ConfinedPath(vmDirectory, config.DiskFileName),
                 KernelPath = ConfinedPath(assetsDirectory, config.KernelFileName),

@@ -108,6 +108,7 @@ namespace YlvaOS
         public string AssetsDirectory { get; set; }
         public string ToolsDirectory { get; set; }
         public string ImportDirectory { get; set; }
+        public string SnapshotDirectory { get; set; }
         public string UpdateDirectory { get; set; }
         public string DiskPath { get; set; }
         public string KernelPath { get; set; }

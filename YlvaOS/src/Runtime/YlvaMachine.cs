@@ -14,6 +14,8 @@ namespace YlvaOS
         private readonly YlvaState state;
         private readonly YlvaVmBackend vm;
         private readonly YlvaTerminalBuffer terminalBuffer;
+        private string pendingSnapshotAction;
+        private string pendingSnapshotName;
 
         public YlvaMachine(YlvaState state, YlvaVmBackend vm)
         {
@@ -193,6 +195,20 @@ namespace YlvaOS
                 }
             }
 
+            if (!string.IsNullOrEmpty(pendingSnapshotAction))
+            {
+                SubmitPendingSnapshotConfirmation(trimmed);
+                CurrentInput = string.Empty;
+                return CloseRequested;
+            }
+
+            if ((state.Phase == YlvaBootPhase.LoginUserName || state.Phase == YlvaBootPhase.SetupUserName) && IsOfflineCommandAtLogin(trimmed))
+            {
+                ExecuteOfflineCommand(trimmed);
+                CurrentInput = string.Empty;
+                return CloseRequested;
+            }
+
             switch (state.Phase)
             {
                 case YlvaBootPhase.SetupUserName:
@@ -257,7 +273,7 @@ namespace YlvaOS
             }
 
             bool updated = vm.DrainOutput(terminalBuffer.AppendChunk, MaxVmOutputChunksPerPump) > 0;
-            updated = vm.DrainControlMessages(HandleHostCommand, 32) > 0 || updated;
+            updated = vm.DrainControlMessages(HandleHostControlMessage, 32) > 0 || updated;
             if (vm.ConsumeExitedSinceLastStart())
             {
                 state.PoweredOff = true;
@@ -462,7 +478,10 @@ namespace YlvaOS
             Append("  vm status | vm paths | vm start | vm stop");
             Append("  YlvaOS set memory <MiB> | YlvaOS set disk <MiB>");
             Append("  YlvaOS set desktop <WxH> | YlvaOS set fps <FPS>");
+            Append("  YlvaOS snapshot list | create <name> [memo]");
+            Append("  YlvaOS snapshot restore <name> | delete <name>");
             Append("  clear | reboot | shutdown | poweroff | exit");
+            Append("You can run YlvaOS snapshot commands at the login prompt before the VM starts.");
             Append("After the VM boots, Linux commands run inside the guest OS.");
         }
 
@@ -509,6 +528,12 @@ namespace YlvaOS
                 return;
             }
 
+            if (args.Length >= 3 && args[1] == "snapshot")
+            {
+                OfflineSnapshot(args);
+                return;
+            }
+
             if (args.Length == 4 && args[1] == "set" && (args[2] == "memory" || args[2] == "mem"))
             {
                 vm.SetMemoryMiB(ParsePositiveInt(args[3], "memory"));
@@ -547,7 +572,7 @@ namespace YlvaOS
                 return;
             }
 
-            throw new YlvaUserException("usage: YlvaOS status | YlvaOS set memory <MiB> | YlvaOS set disk <MiB> | YlvaOS set desktop <WxH> | YlvaOS set fps <FPS>");
+            throw new YlvaUserException("usage: YlvaOS status | YlvaOS snapshot list|create|restore|delete | YlvaOS set memory <MiB> | YlvaOS set disk <MiB> | YlvaOS set desktop <WxH> | YlvaOS set fps <FPS>");
         }
 
         private void AppendVmStatus()
@@ -572,6 +597,107 @@ namespace YlvaOS
             {
                 Append(snapshot.Message);
             }
+        }
+
+        private void OfflineSnapshot(string[] args)
+        {
+            if (vm == null)
+            {
+                Append("VM backend is unavailable.");
+                return;
+            }
+
+            string subcommand = args.Length > 2 ? args[2] : "list";
+            switch (subcommand)
+            {
+                case "list":
+                case "ls":
+                    Append(vm.FormatSnapshotList());
+                    return;
+                case "create":
+                case "save":
+                    if (args.Length < 4)
+                    {
+                        throw new YlvaUserException("usage: YlvaOS snapshot create <name> [memo]");
+                    }
+
+                    Append(vm.CreateSnapshot(args[3], JoinArgs(args, 4)));
+                    return;
+                case "restore":
+                    if (args.Length < 4)
+                    {
+                        throw new YlvaUserException("usage: YlvaOS snapshot restore <name>");
+                    }
+
+                    if (HasYesFlag(args, 4))
+                    {
+                        Append(vm.RestoreSnapshot(args[3]));
+                        return;
+                    }
+
+                    BeginSnapshotConfirmation("restore", args[3]);
+                    return;
+                case "delete":
+                case "remove":
+                case "rm":
+                    if (args.Length < 4)
+                    {
+                        throw new YlvaUserException("usage: YlvaOS snapshot delete <name>");
+                    }
+
+                    if (HasYesFlag(args, 4))
+                    {
+                        Append(vm.DeleteSnapshot(args[3]));
+                        return;
+                    }
+
+                    BeginSnapshotConfirmation("delete", args[3]);
+                    return;
+                default:
+                    throw new YlvaUserException("usage: YlvaOS snapshot list | create <name> [memo] | restore <name> | delete <name>");
+            }
+        }
+
+        private void BeginSnapshotConfirmation(string action, string snapshotName)
+        {
+            pendingSnapshotAction = action;
+            pendingSnapshotName = snapshotName;
+            Append("Confirm snapshot " + action + ": `" + snapshotName + "`");
+            Append("Type `yes` to continue, or anything else to cancel.");
+        }
+
+        private void SubmitPendingSnapshotConfirmation(string answer)
+        {
+            string action = pendingSnapshotAction;
+            string snapshotName = pendingSnapshotName;
+            pendingSnapshotAction = null;
+            pendingSnapshotName = null;
+
+            if (answer != "yes")
+            {
+                Append("Snapshot " + action + " cancelled.");
+                return;
+            }
+
+            if (vm == null)
+            {
+                Append("VM backend is unavailable.");
+                return;
+            }
+
+            if (action == "restore")
+            {
+                Append(vm.RestoreSnapshot(snapshotName));
+                return;
+            }
+
+            if (action == "delete")
+            {
+                Append(vm.DeleteSnapshot(snapshotName));
+                return;
+            }
+
+            Append("Unknown pending snapshot action.");
         }
 
         private static string[] SplitArgs(string command)
@@ -608,6 +734,74 @@ namespace YlvaOS
             }
 
             return args.ToArray();
+        }
+
+        private static bool IsOfflineCommandAtLogin(string command)
+        {
+            if (string.IsNullOrWhiteSpace(command))
+            {
+                return false;
+            }
+
+            return command == "clear" ||
+                command == "shutdown" ||
+                command == "poweroff" ||
+                command == "exit" ||
+                command == "vm" ||
+                command.StartsWith("vm ", StringComparison.Ordinal) ||
+                command == "YlvaOS" ||
+                command.StartsWith("YlvaOS ", StringComparison.Ordinal);
+        }
+
+        private static bool HasYesFlag(string[] args, int startIndex)
+        {
+            for (int i = startIndex; args != null && i < args.Length; i++)
+            {
+                if (args[i] == "--yes" || args[i] == "-y")
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static string JoinArgs(string[] args, int startIndex)
+        {
+            if (args == null || startIndex >= args.Length)
+            {
+                return string.Empty;
+            }
+
+            StringBuilder builder = new StringBuilder();
+            for (int i = startIndex; i < args.Length; i++)
+            {
+                if (builder.Length > 0)
+                {
+                    builder.Append(' ');
+                }
+
+                builder.Append(args[i]);
+            }
+
+            return builder.ToString();
+        }
+
+        private static string DecodeBase64(string value)
+        {
+            if (string.IsNullOrEmpty(value))
+            {
+                return string.Empty;
+            }
+
+            try
+            {
+                return Encoding.UTF8.GetString(Convert.FromBase64String(value));
+            }
+            catch
+            {
+                return string.Empty;
+            }
         }
 
         private static bool TryNormalizeUserName(string raw, out string userName, out string error)
@@ -666,9 +860,28 @@ namespace YlvaOS
 
         private void HandleHostCommand(string command)
         {
-            if (string.IsNullOrWhiteSpace(command) || vm == null)
+            HandleHostCommandCore(command);
+        }
+
+        private void HandleHostControlMessage(YlvaControlMessage message)
+        {
+            if (message == null)
             {
                 return;
+            }
+
+            string reply = HandleHostCommandCore(message.Command);
+            if (message.WantsReply && reply != null)
+            {
+                message.Reply(reply);
+            }
+        }
+
+        private string HandleHostCommandCore(string command)
+        {
+            if (string.IsNullOrWhiteSpace(command) || vm == null)
+            {
+                return null;
             }
 
             string[] parts = command.Trim().Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
@@ -679,14 +892,14 @@ namespace YlvaOS
                     if (parts[1] == "desktop" || parts[1] == "desktop-ready")
                     {
                         state.DisplayMode = YlvaDisplayMode.Desktop;
-                        return;
+                        return "OK";
                     }
 
                     if (parts[1] == "desktop-starting")
                     {
                         state.DisplayMode = YlvaDisplayMode.DesktopStarting;
                         Append("Starting YlvaOS Desktop...");
-                        return;
+                        return "OK";
                     }
 
                     if (parts[1] == "kernel")
@@ -694,32 +907,32 @@ namespace YlvaOS
                         state.DisplayMode = YlvaDisplayMode.Kernel;
                         vm.DisconnectDesktopClient();
                         Append("Returned to YlvaOS kernel console.");
-                        return;
+                        return "OK";
                     }
                 }
 
                 if (parts.Length == 3 && parts[0] == "set" && (parts[1] == "memory" || parts[1] == "mem"))
                 {
                     vm.SetMemoryMiB(ParsePositiveInt(parts[2], "memory"));
-                    return;
+                    return "YlvaOS memory target set to " + vm.Config.MemoryMiB + " MiB. Reboot YlvaOS to apply.";
                 }
 
                 if (parts.Length == 3 && parts[0] == "set" && parts[1] == "disk")
                 {
                     vm.SetDiskMiB(ParsePositiveInt(parts[2], "disk"));
-                    return;
+                    return "YlvaOS disk target set to " + vm.Config.DiskMiB + " MiB. Reboot YlvaOS to apply.";
                 }
 
                 if (parts.Length == 4 && parts[0] == "set" && (parts[1] == "desktop" || parts[1] == "resolution"))
                 {
                     vm.SetDesktopSize(ParsePositiveInt(parts[2], "desktop width"), ParsePositiveInt(parts[3], "desktop height"));
-                    return;
+                    return "YlvaOS desktop target set to " + vm.Config.DesktopWidth + "x" + vm.Config.DesktopHeight + ". Reboot YlvaOS to apply.";
                 }
 
                 if (parts.Length == 3 && parts[0] == "set" && (parts[1] == "fps" || parts[1] == "framerate"))
                 {
                     vm.SetDesktopRefreshFps(ParsePositiveInt(parts[2], "desktop fps"));
-                    return;
+                    return "YlvaOS desktop refresh target set to " + vm.Config.DesktopRefreshFps + " fps. Reboot YlvaOS to apply.";
                 }
 
                 if (parts.Length == 2 && parts[0] == "network" && parts[1] == "connect")
@@ -734,17 +947,30 @@ namespace YlvaOS
                             Plugin.Log.LogWarning(message);
                         }
 
-                        return;
+                        return message;
                     }
 
                     Append(message);
-                    return;
+                    return message;
                 }
 
+                if (parts.Length == 2 && parts[0] == "host" && parts[1] == "status")
+                {
+                    return vm.FormatHostRuntimeStats();
+                }
+
+                if (parts.Length >= 2 && parts[0] == "snapshot")
+                {
+                    return HandleSnapshotHostCommand(parts);
+                }
+
+                string unknown = "Unknown YlvaOS host command: " + command;
                 if (Plugin.Log != null)
                 {
-                    Plugin.Log.LogWarning("Unknown YlvaOS host command: " + command);
+                    Plugin.Log.LogWarning(unknown);
                 }
+
+                return unknown;
             }
             catch (Exception ex)
             {
@@ -752,6 +978,45 @@ namespace YlvaOS
                 {
                     Plugin.Log.LogWarning("YlvaOS host command failed: " + command + " (" + ex.Message + ")");
                 }
+
+                return ex.Message;
+            }
+        }
+
+        private string HandleSnapshotHostCommand(string[] parts)
+        {
+            string subcommand = parts.Length > 1 ? parts[1] : "list";
+            switch (subcommand)
+            {
+                case "list":
+                case "ls":
+                    return vm.FormatSnapshotList();
+                case "create":
+                case "save":
+                    if (parts.Length < 3)
+                    {
+                        throw new YlvaUserException("usage: YlvaOS snapshot create <name> [memo]");
+                    }
+
+                    return vm.CreateSnapshot(parts[2], parts.Length > 3 ? DecodeBase64(parts[3]) : string.Empty);
+                case "restore":
+                    if (parts.Length < 3)
+                    {
+                        throw new YlvaUserException("usage: YlvaOS snapshot restore <name>");
+                    }
+
+                    return vm.RestoreSnapshot(parts[2]);
+                case "delete":
+                case "remove":
+                case "rm":
+                    if (parts.Length < 3)
+                    {
+                        throw new YlvaUserException("usage: YlvaOS snapshot delete <name>");
+                    }
+
+                    return vm.DeleteSnapshot(parts[2]);
+                default:
+                    throw new YlvaUserException("usage: YlvaOS snapshot list | create <name> [memo] | restore <name> | delete <name>");
             }
         }
 

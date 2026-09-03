@@ -342,10 +342,12 @@ Alpine Linux 3.24.1 base / YlvaOS 0.04</pre>
 ├─ vm\assets\vmlinuz
 ├─ vm\assets\initrd.img
 ├─ Tools\qemu\
+├─ snapshots\
 └─ Import\</pre>
       <ul>
         <li><code>vm\disk.qcow2</code> にはLinux側のユーザー、ホームディレクトリ、インストール済みパッケージなどが保存されます。</li>
         <li><code>vmconfig.json</code> にはメモリ、ディスク、デスクトップ解像度、FPSなどの設定が保存されます。</li>
+        <li><code>snapshots</code> にはYlvaOSのroot diskスナップショットが保存されます。設定ファイルやImportフォルダは含まれません。</li>
         <li><code>Import</code> はホストからYlvaOSへファイルを渡すための読み取り専用フォルダです。</li>
       </ul>
       <p class="note danger">データを削除または初期化したい場合は、ElinとYlvaOSを終了してから <code>YlvaOS</code> フォルダ全体を削除してください。Linux側のユーザー、パスワード、ホームディレクトリ、インストール済みパッケージも削除されます。</p>
@@ -364,6 +366,10 @@ Alpine Linux 3.24.1 base / YlvaOS 0.04</pre>
         <div>YlvaOS Settingsを開きます。</div>
         <div>Files [path]</div>
         <div>File Managerを開きます。パスを省略した場合はホーム周辺を開きます。</div>
+        <div>PackageManager</div>
+        <div>Alpineのapkパッケージを検索、更新、インストール、削除するヘルパーを開きます。</div>
+        <div>RepairMode</div>
+        <div>デスクトップ設定、ユーザー設定、パッケージ状態、シリアルログインの修復ヘルパーを開きます。</div>
         <div>YlvaOS status</div>
         <div>YlvaOSとLinux kernelの状態を表示します。</div>
         <div>YlvaOS update</div>
@@ -372,6 +378,14 @@ Alpine Linux 3.24.1 base / YlvaOS 0.04</pre>
         <div>YlvaOS Settingsを開きます。</div>
         <div>YlvaOS files [path]</div>
         <div>File Managerを開きます。</div>
+        <div>SystemMonitor / YlvaOS monitor</div>
+        <div>CPU、メモリ、ディスク残量、ネットワーク状態、プロセス一覧を軽量モニターで表示します。プロセス終了時は確認が必要です。</div>
+        <div>SnapshotManager / YlvaOS snapshot ...</div>
+        <div>root diskスナップショットの一覧、作成、復元、削除を行います。作成、復元、削除はVM停止中のみ実行できます。</div>
+        <div>YlvaOS package ...</div>
+        <div><code>search</code>、<code>update</code>、<code>install</code>、<code>remove</code> を提供します。ネットワーク無効時は <code>ConnectNetwork</code> の案内を表示し、実行ログは <code>~/YlvaOS/logs/package.log</code> に保存します。</div>
+        <div>YlvaOS repair ...</div>
+        <div><code>desktop</code>、<code>user-config</code>、<code>packages</code>、<code>safe-console</code>、<code>login</code> を提供します。破壊的な修復は <code>~/YlvaOS/backups</code> へバックアップしてから実行します。</div>
         <div>YlvaOS set memory &lt;MiB&gt;</div>
         <div>VMのメモリ割り当てを変更します。反映はYlvaOS再起動後です。</div>
         <div>YlvaOS set disk &lt;MiB&gt;</div>
@@ -393,12 +407,12 @@ Alpine Linux 3.24.1 base / YlvaOS 0.04</pre>
         <div>vm status / vm paths / vm start / vm stop</div>
         <div>VM起動前の管理コンソールで使う補助コマンドです。</div>
       </div>
-      <p>一部コマンドには小文字エイリアスがあります。例: <code>desktop</code>、<code>kernel</code>、<code>terminal</code>、<code>settings</code>、<code>files</code>、<code>connectnetwork</code></p>
+      <p>一部コマンドには小文字エイリアスがあります。例: <code>desktop</code>、<code>kernel</code>、<code>terminal</code>、<code>settings</code>、<code>files</code>、<code>packagemanager</code>、<code>repairmode</code>、<code>connectnetwork</code>。スナップショット操作はVM起動前の管理コンソールでも <code>YlvaOS snapshot list</code>、<code>YlvaOS snapshot create 名前 メモ</code>、<code>YlvaOS snapshot restore 名前</code>、<code>YlvaOS snapshot delete 名前</code> を使用できます。</p>
     </section>
 
     <section id="kernel">
       <h2>カーネルモードの操作</h2>
-      <p>カーネルモードは、YlvaOS起動直後に表示されるテキストコンソールです。Linuxの通常コマンド、YlvaOS独自コマンド、apkなどのパッケージ管理コマンドを入力できます。</p>
+      <p>カーネルモードは、YlvaOS起動直後に表示されるテキストコンソールです。Linuxの通常コマンド、YlvaOS独自コマンド、Package Manager Helper経由のapk操作などを入力できます。</p>
       <ul>
         <li>文字入力: Elin内のYlvaOSウィンドウを選択してキーボード入力します。</li>
         <li><code>Ctrl+V</code>: ホスト側クリップボードの文字列を貼り付けます。</li>
@@ -411,12 +425,12 @@ Alpine Linux 3.24.1 base / YlvaOS 0.04</pre>
 
     <section id="desktop">
       <h2>デスクトップモードの操作</h2>
-      <p>デスクトップモードは、YlvaOS内で動く軽量GUI環境です。Openboxベースのウィンドウ、YlvaOS Terminal、YlvaOS Settings、File Managerを使用できます。</p>
+      <p>デスクトップモードは、YlvaOS内で動く軽量GUI環境です。Openboxベースのウィンドウ、YlvaOS Terminal、YlvaOS Settings、File Manager、Package Manager、System Monitor、Snapshot Manager、Repair Modeを使用できます。</p>
       <ul>
         <li><code>Ctrl+Alt+T</code>: YlvaOS Terminalを開きます。</li>
         <li><code>Ctrl+Alt+K</code>: カーネルモードへ戻ります。端末内で <code>Kernel</code> と入力しても戻れます。</li>
         <li><code>Ctrl+V</code>: ホスト側クリップボードの文字列を貼り付けます。</li>
-        <li>右クリック: デスクトップメニューを開き、Terminal、Settings、File Managerなどを起動できます。</li>
+        <li>右クリック: デスクトップメニューを開き、Terminal、Settings、File Manager、Package Manager、System Monitor、Snapshot Manager、Repair Modeなどを起動できます。</li>
         <li>タイトルバーのボタン: 各ウィンドウを最小化、最大化、閉じることができます。</li>
         <li>YlvaOSウィンドウ右上のX: Elin内の表示ウィンドウを閉じます。VMが動作中の場合、次回使用時に閉じた時点の画面へ戻ります。</li>
       </ul>

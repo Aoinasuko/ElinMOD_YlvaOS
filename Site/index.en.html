@@ -342,10 +342,12 @@ Alpine Linux 3.24.1 base / YlvaOS 0.04</pre>
 ├─ vm\assets\vmlinuz
 ├─ vm\assets\initrd.img
 ├─ Tools\qemu\
+├─ snapshots\
 └─ Import\</pre>
       <ul>
         <li><code>vm\disk.qcow2</code> stores Linux users, home directories, installed packages, and other guest data.</li>
         <li><code>vmconfig.json</code> stores memory, disk, desktop resolution, FPS, and related settings.</li>
+        <li><code>snapshots</code> stores root disk snapshots. Settings files and the Import folder are not included.</li>
         <li><code>Import</code> is a read-only host-to-guest folder used to pass files into YlvaOS.</li>
       </ul>
       <p class="note danger">To reset or remove YlvaOS data, close Elin and YlvaOS, then delete the entire <code>YlvaOS</code> folder. This removes Linux users, passwords, home directories, and installed packages.</p>
@@ -364,6 +366,10 @@ Alpine Linux 3.24.1 base / YlvaOS 0.04</pre>
         <div>Opens YlvaOS Settings.</div>
         <div>Files [path]</div>
         <div>Opens File Manager. If no path is provided, it opens near the home directory.</div>
+        <div>PackageManager</div>
+        <div>Opens a helper for searching, updating, installing, and removing Alpine apk packages.</div>
+        <div>RepairMode</div>
+        <div>Opens the repair helper for desktop config, user config, package state, and serial login recovery.</div>
         <div>YlvaOS status</div>
         <div>Shows YlvaOS and Linux kernel status.</div>
         <div>YlvaOS update</div>
@@ -372,6 +378,14 @@ Alpine Linux 3.24.1 base / YlvaOS 0.04</pre>
         <div>Opens YlvaOS Settings.</div>
         <div>YlvaOS files [path]</div>
         <div>Opens File Manager.</div>
+        <div>SystemMonitor / YlvaOS monitor</div>
+        <div>Shows CPU, memory, disk space, network state, and process list in a lightweight monitor. Ending a process requires confirmation.</div>
+        <div>SnapshotManager / YlvaOS snapshot ...</div>
+        <div>Lists, creates, restores, and deletes root disk snapshots. Create, restore, and delete are available only while the VM is stopped.</div>
+        <div>YlvaOS package ...</div>
+        <div>Provides <code>search</code>, <code>update</code>, <code>install</code>, and <code>remove</code>. When networking is disabled, it points you to <code>ConnectNetwork</code>; logs are written to <code>~/YlvaOS/logs/package.log</code>.</div>
+        <div>YlvaOS repair ...</div>
+        <div>Provides <code>desktop</code>, <code>user-config</code>, <code>packages</code>, <code>safe-console</code>, and <code>login</code>. Destructive repairs back up affected files under <code>~/YlvaOS/backups</code> first.</div>
         <div>YlvaOS set memory &lt;MiB&gt;</div>
         <div>Changes the VM memory allocation. The change applies after rebooting YlvaOS.</div>
         <div>YlvaOS set disk &lt;MiB&gt;</div>
@@ -393,12 +407,12 @@ Alpine Linux 3.24.1 base / YlvaOS 0.04</pre>
         <div>vm status / vm paths / vm start / vm stop</div>
         <div>Helper commands used in the pre-VM management console.</div>
       </div>
-      <p>Some commands also have lowercase aliases, such as <code>desktop</code>, <code>kernel</code>, <code>terminal</code>, <code>settings</code>, <code>files</code>, and <code>connectnetwork</code>.</p>
+      <p>Some commands also have lowercase aliases, such as <code>desktop</code>, <code>kernel</code>, <code>terminal</code>, <code>settings</code>, <code>files</code>, <code>packagemanager</code>, <code>repairmode</code>, and <code>connectnetwork</code>. Snapshot commands can also be used from the pre-VM management console with <code>YlvaOS snapshot list</code>, <code>YlvaOS snapshot create name memo</code>, <code>YlvaOS snapshot restore name</code>, and <code>YlvaOS snapshot delete name</code>.</p>
     </section>
 
     <section id="kernel">
       <h2>Kernel Mode Controls</h2>
-      <p>Kernel mode is the text console shown after YlvaOS starts. You can run normal Linux commands, YlvaOS custom commands, and package management commands such as apk.</p>
+      <p>Kernel mode is the text console shown after YlvaOS starts. You can run normal Linux commands, YlvaOS custom commands, and apk operations through Package Manager Helper.</p>
       <ul>
         <li>Typing: focus the YlvaOS window inside Elin, then type normally.</li>
         <li><code>Ctrl+V</code>: pastes text from the host clipboard into YlvaOS.</li>
@@ -411,12 +425,12 @@ Alpine Linux 3.24.1 base / YlvaOS 0.04</pre>
 
     <section id="desktop">
       <h2>Desktop Mode Controls</h2>
-      <p>Desktop mode is a lightweight GUI environment running inside YlvaOS. It provides Openbox windows, YlvaOS Terminal, YlvaOS Settings, and File Manager.</p>
+      <p>Desktop mode is a lightweight GUI environment running inside YlvaOS. It provides Openbox windows, YlvaOS Terminal, YlvaOS Settings, File Manager, Package Manager, System Monitor, Snapshot Manager, and Repair Mode.</p>
       <ul>
         <li><code>Ctrl+Alt+T</code>: opens YlvaOS Terminal.</li>
         <li><code>Ctrl+Alt+K</code>: returns to kernel mode. You can also type <code>Kernel</code> in a terminal.</li>
         <li><code>Ctrl+V</code>: pastes text from the host clipboard.</li>
-        <li>Right click: opens the desktop menu for Terminal, Settings, File Manager, and related actions.</li>
+        <li>Right click: opens the desktop menu for Terminal, Settings, File Manager, Package Manager, System Monitor, Snapshot Manager, Repair Mode, and related actions.</li>
         <li>Title bar buttons: minimize, maximize, or close desktop windows.</li>
         <li>YlvaOS window X button: closes the in-game display window. If the VM is still running, the next use resumes the screen from where you left it.</li>
       </ul>

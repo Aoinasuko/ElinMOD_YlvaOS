@@ -5,7 +5,7 @@
   "alpineIsoUrl": "https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/x86_64/alpine-virt-3.24.1-x86_64.iso",
   "alpineIsoSha256": "e73a6241bd5f3c5c2d4d38c02cc52c378c0415a7c888bd292066bf36e0f41a39",
   "kernelSha256": "de742db08c7272999f9e32f7d4c919bb9020e8799a351165a1a51eddf8b7638a",
-  "initrdSha256": "f76f520c0f902698fae1ee4b55eb250ab8c18271a03d625062d7a161543be7a8",
-  "diskArchiveSha256": "19f79a38c69d513ee419b769b972bc4c7ae536be027929c7f11fc7d4e0ac21ef",
-  "diskQcow2Sha256": "0af71f354132b76fa830d3c10880bb5b38725d0669c195579b481aab088c0434"
+  "initrdSha256": "d8a37914ffce87ce1aa25fa263406aa2ecd80c52768b2b4ede8684cf86936c77",
+  "diskArchiveSha256": "df082551d7a5bf58b5ef04010e1f49cc2b2876c7a12ac89c929e8374d79afb30",
+  "diskQcow2Sha256": "d7212c96df95615c77ae87ac43fe625ccf725d23927ae9d3026b06de8fd78767"
 }

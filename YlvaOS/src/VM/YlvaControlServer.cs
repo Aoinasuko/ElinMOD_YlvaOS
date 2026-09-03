@@ -14,7 +14,7 @@ namespace YlvaOS
     {
         private readonly string token;
         private readonly ManualLogSource log;
-        private readonly ConcurrentQueue<string> messages = new ConcurrentQueue<string>();
+        private readonly ConcurrentQueue<YlvaControlMessage> messages = new ConcurrentQueue<YlvaControlMessage>();
         private TcpListener listener;
         private CancellationTokenSource cancellation;
         private bool disposed;
@@ -48,8 +48,21 @@ namespace YlvaOS
                 return 0;
             }
 
+            return DrainMessages(delegate (YlvaControlMessage message)
+            {
+                handle(message.Command);
+            }, maxMessages);
+        }
+
+        public int DrainMessages(Action<YlvaControlMessage> handle, int maxMessages)
+        {
+            if (handle == null)
+            {
+                return 0;
+            }
+
             int count = 0;
-            string message;
+            YlvaControlMessage message;
             while (count < maxMessages && messages.TryDequeue(out message))
             {
                 handle(message);
@@ -176,7 +189,7 @@ namespace YlvaOS
                         char ch = (char)buffer[i];
                         if (ch == '\n')
                         {
-                            ProcessLine(line.ToString().Trim());
+                            ProcessLine(line.ToString().Trim(), stream);
                             line.Length = 0;
                             continue;
                         }
@@ -190,7 +203,7 @@ namespace YlvaOS
             }
         }
 
-        private void ProcessLine(string line)
+        private void ProcessLine(string line, NetworkStream stream)
         {
             if (string.IsNullOrWhiteSpace(line))
             {
@@ -224,7 +237,17 @@ namespace YlvaOS
             string command = body.Substring(separator + 1).Trim();
             if (command.Length > 0)
             {
-                messages.Enqueue(command);
+                bool wantsReply = false;
+                if (command.StartsWith("reply ", StringComparison.Ordinal))
+                {
+                    wantsReply = true;
+                    command = command.Substring("reply ".Length).Trim();
+                }
+
+                if (command.Length > 0)
+                {
+                    messages.Enqueue(new YlvaControlMessage(command, stream, log, wantsReply));
+                }
             }
         }
 
@@ -242,6 +265,52 @@ namespace YlvaOS
             }
 
             return diff == 0;
+        }
+    }
+
+    internal sealed class YlvaControlMessage
+    {
+        private readonly NetworkStream stream;
+        private readonly ManualLogSource log;
+        private readonly object replyLock = new object();
+        private bool replied;
+
+        public YlvaControlMessage(string command, NetworkStream stream, ManualLogSource log, bool wantsReply)
+        {
+            Command = command ?? string.Empty;
+            this.stream = stream;
+            this.log = log;
+            WantsReply = wantsReply;
+        }
+
+        public string Command { get; private set; }
+        public bool WantsReply { get; private set; }
+
+        public void Reply(string text)
+        {
+            lock (replyLock)
+            {
+                if (replied || stream == null)
+                {
+                    return;
+                }
+
+                replied = true;
+                try
+                {
+                    string payload = Convert.ToBase64String(Encoding.UTF8.GetBytes(text ?? string.Empty));
+                    byte[] bytes = Encoding.ASCII.GetBytes("YLVAOS_REPLY " + payload + "\n");
+                    stream.Write(bytes, 0, bytes.Length);
+                    stream.Flush();
+                }
+                catch (Exception ex)
+                {
+                    if (log != null)
+                    {
+                        log.LogWarning("Failed to reply to YlvaOS control message: " + ex.Message);
+                    }
+                }
+            }
         }
     }
 }

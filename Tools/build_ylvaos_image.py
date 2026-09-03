@@ -219,6 +219,7 @@ def install_script() -> str:
             "e2fsprogs",
             "util-linux",
             "util-linux-login",
+            "procps-ng",
             "vim",
             "doas",
             "less",
@@ -377,8 +378,11 @@ YlvaOS quick notes
 - Put host files in LocalLow/Lafrontier/Elin/YlvaOS/Import to expose them as a read-only guest drive.
 - QEMU runtime networking is disabled by default in the MOD backend.
 - Run ConnectNetwork and type yes to enable QEMU user-mode networking for this VM session.
-- After connecting, use doas apk update and doas apk add <package> to install packages.
+- After connecting, use PackageManager or YlvaOS package commands to search, update, install, and remove apk packages.
 - Run YlvaOS update after installing a newer MOD package to update YlvaOS-managed OS files from the bundled update drive.
+- Run SystemMonitor or YlvaOS monitor from the desktop to inspect CPU, memory, disk, network, and processes.
+- Run RepairMode or YlvaOS repair commands to back up and reset desktop/user configuration or check package state.
+- Run YlvaOS snapshot commands at the YlvaOS login prompt before the VM starts to save or restore the root disk.
 - Use poweroff to shut down the VM.
 EOF
 chown 1000:1000 /mnt/home/ylva/README.txt
@@ -512,6 +516,28 @@ get_arg() {
     done
 }
 
+want_reply=0
+reply_timeout="${YLVA_CONTROL_TIMEOUT:-4}"
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --reply)
+            want_reply=1
+            shift
+            ;;
+        --timeout)
+            shift
+            case "${1:-}" in
+                ''|*[!0-9]* ) reply_timeout=4 ;;
+                *) reply_timeout="$1" ;;
+            esac
+            shift || true
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
+
 message="$*"
 token="$(get_arg ylva_control_token)"
 port=/dev/virtio-ports/org.ylvaos.control
@@ -521,9 +547,29 @@ if [ -n "$message" ] && [ -n "$token" ] && [ -e "$port" ]; then
         doas chmod 0666 "$port" >/dev/null 2>&1 || true
     fi
 
-    if printf 'YLVAOS %s %s\n' "$token" "$message" >"$port" 2>/dev/null; then
+    if [ "$want_reply" -eq 1 ]; then
+        if exec 3<>"$port" 2>/dev/null && printf 'YLVAOS %s reply %s\n' "$token" "$message" >&3 2>/dev/null; then
+            if IFS= read -r -t "$reply_timeout" reply <&3 2>/dev/null; then
+                case "$reply" in
+                    YLVAOS_REPLY\ *)
+                        payload="${reply#YLVAOS_REPLY }"
+                        printf '%s' "$payload" | base64 -d 2>/dev/null || true
+                        printf '\n'
+                        exit 0
+                        ;;
+                esac
+            fi
+            echo "YlvaOS host control did not reply."
+            exit 1
+        fi
+    elif printf 'YLVAOS %s %s\n' "$token" "$message" >"$port" 2>/dev/null; then
         exit 0
     fi
+fi
+
+if [ "$want_reply" -eq 1 ]; then
+    echo "YlvaOS host control is unavailable."
+    exit 1
 fi
 
 if [ -n "$message" ]; then
@@ -1728,6 +1774,1136 @@ EOF
 chmod 0755 /mnt/usr/bin/Files
 ln -sf /usr/bin/Files /mnt/usr/bin/files
 
+cat >/mnt/usr/lib/ylvaos/snapshot-tui <<'EOF'
+#!/bin/sh
+set -u
+export PATH=/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+
+pause_screen() {
+    printf '\nPress Enter to continue... '
+    IFS= read -r _ || true
+}
+
+read_value() {
+    prompt="$1"
+    printf '%s: ' "$prompt" >&2
+    IFS= read -r value || value=
+    printf '%s' "$value"
+}
+
+confirm_action() {
+    message="$1"
+    if command -v dialog >/dev/null 2>&1 && [ -t 1 ]; then
+        dialog --clear --yesno "$message" 8 72
+        return $?
+    fi
+
+    printf '%s\nType yes to continue: ' "$message"
+    IFS= read -r answer || answer=
+    [ "$answer" = yes ]
+}
+
+show_list() {
+    YlvaOS snapshot list || true
+}
+
+create_snapshot() {
+    name="$(read_value 'Snapshot name')"
+    memo="$(read_value 'Memo')"
+    YlvaOS snapshot create "$name" "$memo" || true
+    pause_screen
+}
+
+restore_snapshot() {
+    name="$(read_value 'Snapshot to restore')"
+    if confirm_action "Restore snapshot '$name'? This replaces only the YlvaOS root disk. Settings and Import are not overwritten."; then
+        YlvaOS snapshot restore "$name" --yes || true
+    else
+        echo "Snapshot restore cancelled."
+    fi
+    pause_screen
+}
+
+delete_snapshot() {
+    name="$(read_value 'Snapshot to delete')"
+    if confirm_action "Delete snapshot '$name'?"; then
+        YlvaOS snapshot delete "$name" --yes || true
+    else
+        echo "Snapshot delete cancelled."
+    fi
+    pause_screen
+}
+
+while :; do
+    clear 2>/dev/null || true
+    echo "YlvaOS Snapshot Manager"
+    echo "======================="
+    echo
+    show_list
+    cat <<'MENU'
+
+Snapshot create, restore, and delete are available only while the VM is stopped.
+Shut down with poweroff, reopen the computer, and run YlvaOS snapshot commands at the login prompt.
+
+1) Create snapshot
+2) Restore snapshot
+3) Delete snapshot
+4) Refresh
+5) Quit
+
+MENU
+    printf 'Select: '
+    IFS= read -r choice || exit 0
+    case "$choice" in
+        1) create_snapshot ;;
+        2) restore_snapshot ;;
+        3) delete_snapshot ;;
+        4) ;;
+        5|q|Q) exit 0 ;;
+        *) echo "Unknown selection."; pause_screen ;;
+    esac
+done
+EOF
+chmod 0755 /mnt/usr/lib/ylvaos/snapshot-tui
+
+cat >/mnt/usr/bin/SnapshotManager <<'EOF'
+#!/bin/sh
+set -u
+export PATH=/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+
+if [ -n "${DISPLAY:-}" ] && command -v xterm >/dev/null 2>&1 && [ "${YLVA_SNAPSHOT_INLINE:-0}" != 1 ]; then
+    YLVA_SNAPSHOT_INLINE=1 xterm -title "YlvaOS Snapshot Manager" -geometry 104x32+112+88 -e /usr/lib/ylvaos/snapshot-tui &
+    exit 0
+fi
+
+exec /usr/lib/ylvaos/snapshot-tui
+EOF
+chmod 0755 /mnt/usr/bin/SnapshotManager
+ln -sf /usr/bin/SnapshotManager /mnt/usr/bin/snapshotmanager
+
+cat >/mnt/usr/lib/ylvaos/system-monitor-tui <<'EOF'
+#!/bin/sh
+set -u
+export PATH=/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+
+sort_by=cpu
+interval=2
+cpu_state=/tmp/ylva-monitor-cpu-prev
+
+read_cpu_percent() {
+    line="$(awk '/^cpu / { idle=$5 + $6; total=0; for (i=2; i<=NF; i++) total += $i; printf "%s %s\\n", total, idle; exit }' /proc/stat 2>/dev/null || true)"
+    set -- $line
+    total="${1:-0}"
+    idle="${2:-0}"
+    prev_total=
+    prev_idle=
+    if [ -r "$cpu_state" ]; then
+        read -r prev_total prev_idle <"$cpu_state" || true
+    fi
+    printf '%s %s\\n' "$total" "$idle" >"$cpu_state" 2>/dev/null || true
+    awk -v total="$total" -v idle="$idle" -v prev_total="${prev_total:-}" -v prev_idle="${prev_idle:-}" '
+        BEGIN {
+            if (prev_total == "" || total <= prev_total) {
+                printf "sampling"
+                exit
+            }
+            dt = total - prev_total
+            di = idle - prev_idle
+            if (dt <= 0) {
+                printf "sampling"
+            } else {
+                printf "%.1f%%", (dt - di) * 100 / dt
+            }
+        }
+    '
+}
+
+print_memory() {
+    awk '
+        /^MemTotal:/ { total=$2 }
+        /^MemAvailable:/ { available=$2 }
+        END {
+            if (total > 0) {
+                used = total - available
+                printf "%.0f MiB used / %.0f MiB total (%.1f%%)\\n", used / 1024, total / 1024, used * 100 / total
+            } else {
+                print "unknown"
+            }
+        }
+    ' /proc/meminfo 2>/dev/null
+}
+
+print_disk() {
+    df -h / 2>/dev/null | awk 'NR==2 { printf "%s used / %s total (%s), %s available\\n", $3, $2, $5, $4 }'
+}
+
+print_network() {
+    interfaces="$(for path in /sys/class/net/*; do name="${path##*/}"; [ "$name" = lo ] && continue; printf '%s ' "$name"; done 2>/dev/null)"
+    if ip route 2>/dev/null | grep -q '^default '; then
+        printf 'connected'
+    else
+        printf 'disabled'
+    fi
+    if [ -n "$interfaces" ]; then
+        printf ' (%s)' "$interfaces"
+    fi
+    printf '\n'
+}
+
+print_host_status() {
+    status="$(ylva-control --reply --timeout 1 host status 2>/dev/null || true)"
+    if [ -n "$status" ]; then
+        printf '%s\n' "$status"
+    else
+        echo "Host QEMU: unavailable from this session"
+    fi
+}
+
+print_processes() {
+    case "$sort_by" in
+        pid) sort_arg=pid ;;
+        name) sort_arg=comm ;;
+        mem) sort_arg=-rss ;;
+        *) sort_arg=-pcpu ;;
+    esac
+
+    printf '%6s  %-24s  %6s  %9s\\n' PID PROCESS CPU RSS
+    if ps -eo pid=,comm=,pcpu=,rss= --sort="$sort_arg" >/tmp/ylva-monitor-ps 2>/dev/null; then
+        awk 'NF >= 4 && NR <= 18 { printf "%6s  %-24.24s  %6.1f  %8.1fM\\n", $1, $2, $3, $4 / 1024 }' /tmp/ylva-monitor-ps
+        return
+    fi
+
+    ps 2>/dev/null | awk 'NR > 1 && NR <= 18 { printf "%6s  %-24.24s  %6s  %9s\\n", $1, $4, "-", "-" }'
+}
+
+render_screen() {
+    echo "YlvaOS System Monitor"
+    echo "====================="
+    echo
+    printf 'Guest CPU: '
+    read_cpu_percent
+    printf '\n'
+    printf 'Guest memory: '
+    print_memory
+    printf 'Root disk: '
+    print_disk
+    printf 'Guest network: '
+    print_network
+    print_host_status
+    echo
+    echo "Processes (sorted by $sort_by)"
+    print_processes
+}
+
+protected_process() {
+    pid="$1"
+    case "$pid" in
+        ''|*[!0-9]*|1) return 0 ;;
+    esac
+
+    if [ ! -d "/proc/$pid" ]; then
+        return 1
+    fi
+
+    comm="$(cat "/proc/$pid/comm" 2>/dev/null || true)"
+    case "$comm" in
+        init|openrc|agetty|ylva-getty|Xorg|xinit|startx|openbox|openbox-session|tint2|xterm|dbus-daemon|pulseaudio|ylva-*)
+            return 0
+            ;;
+    esac
+
+    cmdline="$(tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null || true)"
+    case "$cmdline" in
+        *ylva-desktop-session*|*ylva-start-desktop*|*system-monitor-tui*)
+            return 0
+            ;;
+    esac
+
+    return 1
+}
+
+kill_process() {
+    pid="${1:-}"
+    assume_yes="${2:-0}"
+    case "$pid" in
+        ''|*[!0-9]*)
+            echo "PID must be a positive integer."
+            return 2
+            ;;
+    esac
+
+    if [ ! -d "/proc/$pid" ]; then
+        echo "PID $pid is not running."
+        return 1
+    fi
+
+    if protected_process "$pid"; then
+        echo "Refusing to terminate protected process PID $pid."
+        return 1
+    fi
+
+    comm="$(cat "/proc/$pid/comm" 2>/dev/null || printf '?')"
+    if [ "$assume_yes" != 1 ]; then
+        printf 'Terminate PID %s (%s)? Type yes to continue: ' "$pid" "$comm"
+        IFS= read -r answer || answer=
+        if [ "$answer" != yes ]; then
+            echo "Process termination cancelled."
+            return 1
+        fi
+    fi
+
+    if kill -TERM "$pid" 2>/tmp/ylva-monitor-kill.log; then
+        sleep 1
+        if kill -0 "$pid" 2>/dev/null; then
+            echo "Sent TERM to PID $pid, but it is still running."
+        else
+            echo "Terminated PID $pid."
+        fi
+        return 0
+    fi
+
+    echo "Could not terminate PID $pid."
+    cat /tmp/ylva-monitor-kill.log 2>/dev/null || true
+    return 1
+}
+
+case "${1:-}" in
+    --once)
+        render_screen
+        exit 0
+        ;;
+    --kill)
+        assume=0
+        if [ "${3:-}" = "--yes" ] || [ "${3:-}" = "-y" ]; then
+            assume=1
+        fi
+        kill_process "${2:-}" "$assume"
+        exit $?
+        ;;
+esac
+
+while :; do
+    clear 2>/dev/null || true
+    render_screen
+    cat <<'MENU'
+
+[c] CPU sort  [m] memory sort  [p] PID sort  [n] name sort  [k] terminate PID  [q] quit
+MENU
+    printf 'Select: '
+    if IFS= read -r -t "$interval" choice; then
+        case "$choice" in
+            c|C) sort_by=cpu ;;
+            m|M) sort_by=mem ;;
+            p|P) sort_by=pid ;;
+            n|N) sort_by=name ;;
+            k|K)
+                printf 'PID: '
+                IFS= read -r pid || pid=
+                kill_process "$pid" 0
+                printf '\nPress Enter to continue... '
+                IFS= read -r _ || true
+                ;;
+            q|Q) exit 0 ;;
+        esac
+    fi
+done
+EOF
+chmod 0755 /mnt/usr/lib/ylvaos/system-monitor-tui
+
+cat >/mnt/usr/bin/SystemMonitor <<'EOF'
+#!/bin/sh
+set -u
+export PATH=/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+
+case "${1:-}" in
+    --once|--kill)
+        exec /usr/lib/ylvaos/system-monitor-tui "$@"
+        ;;
+esac
+
+if [ -n "${DISPLAY:-}" ] && command -v xterm >/dev/null 2>&1 && [ "${YLVA_MONITOR_INLINE:-0}" != 1 ]; then
+    YLVA_MONITOR_INLINE=1 xterm -title "YlvaOS System Monitor" -geometry 112x34+128+96 -e /usr/lib/ylvaos/system-monitor-tui "$@" &
+    exit 0
+fi
+
+exec /usr/lib/ylvaos/system-monitor-tui "$@"
+EOF
+chmod 0755 /mnt/usr/bin/SystemMonitor
+ln -sf /usr/bin/SystemMonitor /mnt/usr/bin/systemmonitor
+
+cat >/mnt/usr/lib/ylvaos/package-helper <<'EOF'
+#!/bin/sh
+set -u
+set -f
+export PATH=/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+
+log_dir="${HOME:-/home/ylva}/YlvaOS/logs"
+log_file="$log_dir/package.log"
+
+usage() {
+    cat <<'USAGE'
+usage: YlvaOS package status
+       YlvaOS package update
+       YlvaOS package search <name>
+       YlvaOS package install [--yes] <package...>
+       YlvaOS package remove [--yes] <package...>
+       YlvaOS package log
+
+PackageManager opens the interactive package helper.
+YlvaOS uses Alpine Linux, so packages are managed with apk, not apt.
+USAGE
+}
+
+ensure_log() {
+    mkdir -p "$log_dir" 2>/dev/null || true
+    touch "$log_file" 2>/dev/null || true
+}
+
+log_event() {
+    ensure_log
+    printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >>"$log_file" 2>/dev/null || true
+}
+
+run_apk() {
+    if [ "$(id -u)" -eq 0 ]; then
+        apk "$@"
+    else
+        doas apk "$@"
+    fi
+}
+
+network_connected() {
+    ip route 2>/dev/null | grep -q '^default '
+}
+
+print_network_state() {
+    if network_connected; then
+        echo "Network: connected for this VM session"
+    else
+        echo "Network: disabled"
+    fi
+}
+
+require_network() {
+    if network_connected; then
+        return 0
+    fi
+
+    cat <<'NETWORK'
+Network is disabled for this VM session.
+Run ConnectNetwork, read the English warning, and type yes before package search, update, or install.
+NETWORK
+    return 1
+}
+
+disk_summary() {
+    df -h / 2>/dev/null | awk 'NR==2 { printf "Root disk: %s available, %s used of %s (%s)\\n", $4, $3, $2, $5 }'
+}
+
+valid_package_name() {
+    pkg="${1:-}"
+    case "$pkg" in
+        ''|-*|*/*|*\\*|*[!abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._+@:-]*)
+            return 1
+            ;;
+    esac
+    [ "${#pkg}" -le 128 ]
+}
+
+validate_packages() {
+    if [ "$#" -eq 0 ]; then
+        echo "At least one package name is required."
+        return 2
+    fi
+
+    for pkg in "$@"; do
+        if ! valid_package_name "$pkg"; then
+            echo "Invalid package name: $pkg"
+            echo "Use plain Alpine package names such as vim, htop, or dosbox."
+            return 2
+        fi
+    done
+}
+
+confirm_action() {
+    message="$1"
+    assume_yes="${2:-0}"
+    if [ "$assume_yes" = 1 ]; then
+        return 0
+    fi
+
+    if command -v dialog >/dev/null 2>&1 && [ -t 1 ]; then
+        dialog --clear --yesno "$message" 8 72
+        return $?
+    fi
+
+    printf '%s Type yes to continue: ' "$message"
+    IFS= read -r answer || answer=
+    [ "$answer" = yes ]
+}
+
+parse_yes() {
+    assume_yes=0
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --yes|-y)
+                assume_yes=1
+                shift
+                ;;
+            --)
+                shift
+                break
+                ;;
+            *)
+                break
+                ;;
+        esac
+    done
+    printf '%s\n' "$assume_yes"
+    return 0
+}
+
+status_command() {
+    echo "YlvaOS Package Manager Helper"
+    echo "============================="
+    echo
+    print_network_state
+    disk_summary
+    if [ -f /lib/apk/db/installed ]; then
+        count="$(grep -c '^P:' /lib/apk/db/installed 2>/dev/null || printf 0)"
+        echo "Installed packages: $count"
+    fi
+    echo "Log file: $log_file"
+    echo
+    echo "Tip: use apk package names, not apt package names."
+}
+
+update_command() {
+    require_network || return 1
+    ensure_log
+    log_event "apk update"
+    run_apk update >/tmp/ylva-package-run.log 2>&1
+    status=$?
+    cat /tmp/ylva-package-run.log | tee -a "$log_file"
+    return "$status"
+}
+
+search_command() {
+    query="${1:-}"
+    if ! valid_package_name "$query"; then
+        echo "Search requires one plain package name or prefix."
+        return 2
+    fi
+    require_network || return 1
+    ensure_log
+    log_event "apk search $query"
+    run_apk search "$query" >/tmp/ylva-package-run.log 2>&1
+    status=$?
+    cat /tmp/ylva-package-run.log | tee -a "$log_file"
+    return "$status"
+}
+
+install_command() {
+    assume_yes=0
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --yes|-y)
+                assume_yes=1
+                shift
+                ;;
+            --)
+                shift
+                break
+                ;;
+            *)
+                break
+                ;;
+        esac
+    done
+
+    validate_packages "$@" || return $?
+    require_network || return 1
+    ensure_log
+    echo "Install request"
+    echo "==============="
+    print_network_state
+    disk_summary
+    printf 'Packages:'
+    for pkg in "$@"; do
+        printf ' %s' "$pkg"
+    done
+    printf '\n\n'
+    echo "APK simulation follows. It includes dependency and size information when apk can calculate it."
+    if ! run_apk --simulate add "$@" >/tmp/ylva-package-plan.log 2>&1; then
+        cat /tmp/ylva-package-plan.log | tee -a "$log_file"
+        log_event "apk --simulate add failed: $*"
+        echo "Package install was not started."
+        return 1
+    fi
+    cat /tmp/ylva-package-plan.log | tee -a "$log_file"
+
+    if ! confirm_action "Install these packages?" "$assume_yes"; then
+        echo "Package install cancelled."
+        return 1
+    fi
+
+    log_event "apk add $*"
+    run_apk add "$@" >/tmp/ylva-package-run.log 2>&1
+    status=$?
+    cat /tmp/ylva-package-run.log | tee -a "$log_file"
+    return "$status"
+}
+
+remove_command() {
+    assume_yes=0
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --yes|-y)
+                assume_yes=1
+                shift
+                ;;
+            --)
+                shift
+                break
+                ;;
+            *)
+                break
+                ;;
+        esac
+    done
+
+    validate_packages "$@" || return $?
+    ensure_log
+    echo "Remove request"
+    echo "=============="
+    print_network_state
+    disk_summary
+    printf 'Packages:'
+    for pkg in "$@"; do
+        printf ' %s' "$pkg"
+    done
+    printf '\n\n'
+    echo "APK simulation follows."
+    if ! run_apk --simulate del "$@" >/tmp/ylva-package-plan.log 2>&1; then
+        cat /tmp/ylva-package-plan.log | tee -a "$log_file"
+        log_event "apk --simulate del failed: $*"
+        echo "Package removal was not started."
+        return 1
+    fi
+    cat /tmp/ylva-package-plan.log | tee -a "$log_file"
+
+    if ! confirm_action "Remove these packages?" "$assume_yes"; then
+        echo "Package removal cancelled."
+        return 1
+    fi
+
+    log_event "apk del $*"
+    run_apk del "$@" >/tmp/ylva-package-run.log 2>&1
+    status=$?
+    cat /tmp/ylva-package-run.log | tee -a "$log_file"
+    return "$status"
+}
+
+show_log() {
+    if [ -s "$log_file" ]; then
+        tail -n 80 "$log_file"
+    else
+        echo "No package log has been written yet."
+    fi
+}
+
+pause_screen() {
+    printf '\nPress Enter to continue... '
+    IFS= read -r _ || true
+}
+
+read_value() {
+    prompt="$1"
+    printf '%s: ' "$prompt" >&2
+    IFS= read -r value || value=
+    printf '%s' "$value"
+}
+
+tui() {
+    while :; do
+        clear 2>/dev/null || true
+        status_command
+        cat <<'MENU'
+
+1) Search packages
+2) Update package index
+3) Install packages
+4) Remove packages
+5) Show package log
+6) Quit
+
+MENU
+        printf 'Select: '
+        IFS= read -r choice || exit 0
+        case "$choice" in
+            1)
+                query="$(read_value 'Search name')"
+                search_command "$query" || true
+                pause_screen
+                ;;
+            2)
+                update_command || true
+                pause_screen
+                ;;
+            3)
+                names="$(read_value 'Packages to install')"
+                install_command $names || true
+                pause_screen
+                ;;
+            4)
+                names="$(read_value 'Packages to remove')"
+                remove_command $names || true
+                pause_screen
+                ;;
+            5)
+                show_log
+                pause_screen
+                ;;
+            6|q|Q)
+                exit 0
+                ;;
+            *)
+                echo "Unknown selection."
+                pause_screen
+                ;;
+        esac
+    done
+}
+
+case "${1:-}" in
+    ''|menu|tui)
+        tui
+        ;;
+    help|--help|-h)
+        usage
+        ;;
+    status)
+        status_command
+        ;;
+    update)
+        shift || true
+        update_command
+        ;;
+    search|find)
+        shift || true
+        search_command "${1:-}"
+        ;;
+    install|add)
+        shift || true
+        install_command "$@"
+        ;;
+    remove|del|delete|rm)
+        shift || true
+        remove_command "$@"
+        ;;
+    log)
+        show_log
+        ;;
+    *)
+        usage
+        exit 2
+        ;;
+esac
+EOF
+chmod 0755 /mnt/usr/lib/ylvaos/package-helper
+
+cat >/mnt/usr/bin/PackageManager <<'EOF'
+#!/bin/sh
+set -u
+export PATH=/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+
+if [ "$#" -eq 0 ] && [ -n "${DISPLAY:-}" ] && command -v xterm >/dev/null 2>&1 && [ "${YLVA_PACKAGE_INLINE:-0}" != 1 ]; then
+    YLVA_PACKAGE_INLINE=1 xterm -title "YlvaOS Package Manager" -geometry 104x32+144+112 -e /usr/lib/ylvaos/package-helper &
+    exit 0
+fi
+
+exec /usr/lib/ylvaos/package-helper "$@"
+EOF
+chmod 0755 /mnt/usr/bin/PackageManager
+ln -sf /usr/bin/PackageManager /mnt/usr/bin/packagemanager
+
+cat >/mnt/usr/lib/ylvaos/repair-mode <<'EOF'
+#!/bin/sh
+set -u
+export PATH=/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+
+home_dir="${HOME:-/home/ylva}"
+log_dir="$home_dir/YlvaOS/logs"
+log_file="$log_dir/repair.log"
+backup_root="$home_dir/YlvaOS/backups"
+backup_dir=
+
+usage() {
+    cat <<'USAGE'
+usage: YlvaOS repair status
+       YlvaOS repair desktop [--yes]
+       YlvaOS repair user-config [--yes]
+       YlvaOS repair packages [--check|--yes]
+       YlvaOS repair safe-console [--yes]
+       YlvaOS repair login [--yes]
+       YlvaOS repair all [--yes]
+
+RepairMode opens the interactive repair helper.
+Destructive repairs back up affected files under ~/YlvaOS/backups first.
+USAGE
+}
+
+ensure_dirs() {
+    mkdir -p "$log_dir" "$backup_root" 2>/dev/null || true
+}
+
+log_event() {
+    ensure_dirs
+    printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >>"$log_file" 2>/dev/null || true
+}
+
+run_root() {
+    if [ "$(id -u)" -eq 0 ]; then
+        "$@"
+    else
+        doas "$@"
+    fi
+}
+
+run_apk() {
+    if [ "$(id -u)" -eq 0 ]; then
+        apk "$@"
+    else
+        doas apk "$@"
+    fi
+}
+
+make_backup_dir() {
+    ensure_dirs
+    if [ -z "$backup_dir" ]; then
+        backup_dir="$backup_root/repair-$(date '+%Y%m%d-%H%M%S')-$$"
+        mkdir -p "$backup_dir"
+    fi
+}
+
+backup_item() {
+    src="$1"
+    [ -e "$src" ] || [ -L "$src" ] || return 0
+    make_backup_dir
+    rel="$(printf '%s' "$src" | sed 's#^/##')"
+    dest="$backup_dir/$rel"
+    mkdir -p "$(dirname "$dest")"
+    if cp -a "$src" "$dest" 2>/dev/null; then
+        echo "Backed up $src"
+        return 0
+    fi
+    if run_root cp -a "$src" "$dest" 2>/dev/null; then
+        echo "Backed up $src"
+        return 0
+    fi
+    echo "Warning: could not back up $src"
+    return 1
+}
+
+confirm_action() {
+    message="$1"
+    assume_yes="${2:-0}"
+    if [ "$assume_yes" = 1 ]; then
+        return 0
+    fi
+
+    if command -v dialog >/dev/null 2>&1 && [ -t 1 ]; then
+        dialog --clear --yesno "$message" 8 72
+        return $?
+    fi
+
+    printf '%s Type yes to continue: ' "$message"
+    IFS= read -r answer || answer=
+    [ "$answer" = yes ]
+}
+
+network_connected() {
+    ip route 2>/dev/null | grep -q '^default '
+}
+
+print_network_state() {
+    if network_connected; then
+        echo "Network: connected for this VM session"
+    else
+        echo "Network: disabled"
+    fi
+}
+
+disk_summary() {
+    df -h / 2>/dev/null | awk 'NR==2 { printf "Root disk: %s available, %s used of %s (%s)\\n", $4, $3, $2, $5 }'
+}
+
+status_command() {
+    echo "YlvaOS Repair Mode"
+    echo "=================="
+    echo
+    print_network_state
+    disk_summary
+    if [ -f "$home_dir/.ylvaos-safe-console" ]; then
+        echo "Desktop safe-console marker: enabled"
+    else
+        echo "Desktop safe-console marker: disabled"
+    fi
+    if [ -f /lib/apk/db/installed ]; then
+        count="$(grep -c '^P:' /lib/apk/db/installed 2>/dev/null || printf 0)"
+        echo "Package database: present ($count packages)"
+    else
+        echo "Package database: missing"
+    fi
+    echo "Repair log: $log_file"
+    echo "Backup folder: $backup_root"
+}
+
+reset_desktop_files() {
+    backup_item "$home_dir/.Xresources" || true
+    backup_item "$home_dir/.config/openbox" || true
+    backup_item "$home_dir/.config/tint2" || true
+    rm -rf "$home_dir/.config/openbox" "$home_dir/.config/tint2" "$home_dir/.Xresources"
+    mkdir -p "$home_dir/.config/openbox" "$home_dir/.config/tint2"
+    rm -f "$home_dir/.ylvaos-safe-console"
+    rm -f /tmp/ylva-desktop-input /tmp/ylva-desktop-input.pid /tmp/ylva-monitor-cpu-prev 2>/dev/null || true
+    echo "Desktop configuration was reset. Run Desktop to regenerate Openbox and tint2 files."
+}
+
+desktop_command() {
+    assume_yes="${1:-0}"
+    if ! confirm_action "Reset desktop config and clear safe-console mode?" "$assume_yes"; then
+        echo "Desktop repair cancelled."
+        return 1
+    fi
+    log_event "repair desktop"
+    reset_desktop_files
+    [ -n "$backup_dir" ] && echo "Backup written to $backup_dir"
+}
+
+write_user_profile() {
+    cat >"$home_dir/.profile" <<'EOF_PROFILE'
+export PATH=/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+[ -f /etc/profile.d/ylvaos-locale.sh ] && . /etc/profile.d/ylvaos-locale.sh
+[ -f /etc/profile.d/ylvaos-audio.sh ] && . /etc/profile.d/ylvaos-audio.sh
+EOF_PROFILE
+    cat >"$home_dir/.ashrc" <<'EOF_ASHRC'
+alias ll='ls -la'
+alias pkg='YlvaOS package'
+alias repair='YlvaOS repair'
+EOF_ASHRC
+}
+
+user_config_command() {
+    assume_yes="${1:-0}"
+    if ! confirm_action "Back up and recreate YlvaOS user configuration files?" "$assume_yes"; then
+        echo "User config repair cancelled."
+        return 1
+    fi
+    log_event "repair user-config"
+    backup_item "$home_dir/.profile" || true
+    backup_item "$home_dir/.ashrc" || true
+    backup_item "$home_dir/.Xresources" || true
+    backup_item "$home_dir/.config/openbox" || true
+    backup_item "$home_dir/.config/tint2" || true
+    mkdir -p "$home_dir/.config" "$home_dir/YlvaOS/logs" "$home_dir/Import"
+    write_user_profile
+    reset_desktop_files
+    [ -n "$backup_dir" ] && echo "Backup written to $backup_dir"
+}
+
+packages_command() {
+    apply=0
+    assume_yes=0
+    case "${1:-}" in
+        --yes|-y)
+            apply=1
+            assume_yes=1
+            ;;
+        --apply)
+            apply=1
+            ;;
+        --check|'')
+            apply=0
+            ;;
+        *)
+            echo "Unknown packages option: $1"
+            return 2
+            ;;
+    esac
+
+    ensure_dirs
+    if [ "$apply" != 1 ]; then
+        echo "Checking package state with apk --simulate fix."
+        log_event "apk --simulate fix"
+        run_apk --simulate fix >/tmp/ylva-repair-package.log 2>&1
+        status=$?
+        cat /tmp/ylva-repair-package.log | tee -a "$log_file"
+        echo "No package changes were applied. Run YlvaOS repair packages --yes to apply apk fix."
+        return "$status"
+    fi
+
+    if ! network_connected; then
+        echo "Network is disabled. Local package metadata can still be checked, but reinstalling missing packages may require ConnectNetwork."
+    fi
+    if ! confirm_action "Apply apk fix to repair installed packages?" "$assume_yes"; then
+        echo "Package repair cancelled."
+        return 1
+    fi
+    log_event "apk fix"
+    run_apk fix >/tmp/ylva-repair-package.log 2>&1
+    status=$?
+    cat /tmp/ylva-repair-package.log | tee -a "$log_file"
+    return "$status"
+}
+
+safe_console_command() {
+    assume_yes="${1:-0}"
+    if ! confirm_action "Enable safe-console mode and prevent normal Desktop startup?" "$assume_yes"; then
+        echo "Safe-console repair cancelled."
+        return 1
+    fi
+    log_event "repair safe-console"
+    mkdir -p "$home_dir"
+    cat >"$home_dir/.ylvaos-safe-console" <<'EOF_MARKER'
+YlvaOS Repair Mode safe-console is enabled.
+Run YlvaOS repair desktop --yes to reset desktop config and re-enable normal Desktop startup.
+Run Desktop --force for a one-time desktop start.
+EOF_MARKER
+    echo "Safe-console mode enabled. Desktop will refuse normal startup until desktop repair clears this marker."
+}
+
+login_command() {
+    assume_yes="${1:-0}"
+    if ! confirm_action "Repair serial console login entries in /etc/inittab and /etc/securetty?" "$assume_yes"; then
+        echo "Login repair cancelled."
+        return 1
+    fi
+    log_event "repair login"
+    backup_item /etc/securetty || true
+    backup_item /etc/inittab || true
+    run_root sh -c 'touch /etc/securetty; grep -qx ttyS0 /etc/securetty || echo ttyS0 >>/etc/securetty'
+    run_root sed -i '/ttyS0::respawn:/d' /etc/inittab
+    run_root sh -c "echo 'ttyS0::respawn:/sbin/ylva-getty' >>/etc/inittab"
+    echo "Serial console login entries were repaired."
+    [ -n "$backup_dir" ] && echo "Backup written to $backup_dir"
+}
+
+all_command() {
+    assume_yes="${1:-0}"
+    desktop_command "$assume_yes" || return $?
+    user_config_command "$assume_yes" || return $?
+    packages_command --check || return $?
+    login_command "$assume_yes" || return $?
+}
+
+show_log() {
+    if [ -s "$log_file" ]; then
+        tail -n 80 "$log_file"
+    else
+        echo "No repair log has been written yet."
+    fi
+}
+
+pause_screen() {
+    printf '\nPress Enter to continue... '
+    IFS= read -r _ || true
+}
+
+tui() {
+    while :; do
+        clear 2>/dev/null || true
+        status_command
+        cat <<'MENU'
+
+1) Reset desktop config
+2) Repair user config
+3) Check package state
+4) Apply package repair
+5) Enable safe-console mode
+6) Repair serial login
+7) Show repair log
+8) Quit
+
+MENU
+        printf 'Select: '
+        IFS= read -r choice || exit 0
+        case "$choice" in
+            1) desktop_command 0 || true; pause_screen ;;
+            2) user_config_command 0 || true; pause_screen ;;
+            3) packages_command --check || true; pause_screen ;;
+            4) packages_command --apply || true; pause_screen ;;
+            5) safe_console_command 0 || true; pause_screen ;;
+            6) login_command 0 || true; pause_screen ;;
+            7) show_log; pause_screen ;;
+            8|q|Q) exit 0 ;;
+            *) echo "Unknown selection."; pause_screen ;;
+        esac
+    done
+}
+
+assume_yes=0
+case "${2:-}" in
+    --yes|-y)
+        assume_yes=1
+        ;;
+esac
+
+case "${1:-}" in
+    ''|menu|tui)
+        tui
+        ;;
+    help|--help|-h)
+        usage
+        ;;
+    status)
+        status_command
+        ;;
+    desktop)
+        desktop_command "$assume_yes"
+        ;;
+    user-config|user|config)
+        user_config_command "$assume_yes"
+        ;;
+    packages|package)
+        shift || true
+        packages_command "${1:-}"
+        ;;
+    safe-console|console)
+        safe_console_command "$assume_yes"
+        ;;
+    login|serial)
+        login_command "$assume_yes"
+        ;;
+    all)
+        all_command "$assume_yes"
+        ;;
+    log)
+        show_log
+        ;;
+    *)
+        usage
+        exit 2
+        ;;
+esac
+EOF
+chmod 0755 /mnt/usr/lib/ylvaos/repair-mode
+
+cat >/mnt/usr/bin/RepairMode <<'EOF'
+#!/bin/sh
+set -u
+export PATH=/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+
+if [ "$#" -eq 0 ] && [ -n "${DISPLAY:-}" ] && command -v xterm >/dev/null 2>&1 && [ "${YLVA_REPAIR_INLINE:-0}" != 1 ]; then
+    YLVA_REPAIR_INLINE=1 xterm -title "YlvaOS Repair Mode" -geometry 104x32+160+128 -e /usr/lib/ylvaos/repair-mode &
+    exit 0
+fi
+
+exec /usr/lib/ylvaos/repair-mode "$@"
+EOF
+chmod 0755 /mnt/usr/bin/RepairMode
+ln -sf /usr/bin/RepairMode /mnt/usr/bin/repairmode
+
 cat >/mnt/usr/lib/ylvaos/settings-tui <<'EOF'
 #!/bin/sh
 set -u
@@ -1834,7 +3010,11 @@ while :; do
 5) Setup audio
 6) Connect network
 7) Open file manager
-8) Quit
+8) Snapshot manager
+9) System monitor
+10) Package manager
+11) Repair mode
+12) Quit
 
 MENU
     printf 'Select: '
@@ -1847,7 +3027,11 @@ MENU
         5) YlvaOS setup audio; pause_screen ;;
         6) ConnectNetwork; pause_screen ;;
         7) Files; pause_screen ;;
-        8|q|Q) exit 0 ;;
+        8) SnapshotManager; pause_screen ;;
+        9) SystemMonitor; pause_screen ;;
+        10) PackageManager; pause_screen ;;
+        11) RepairMode; pause_screen ;;
+        12|q|Q) exit 0 ;;
         *) echo "Unknown selection."; pause_screen ;;
     esac
 done
@@ -2118,6 +3302,26 @@ cat >"$home/.config/openbox/menu.xml" <<'EOF_OBMENU'
         <command>Files</command>
       </action>
     </item>
+    <item label="Package Manager">
+      <action name="Execute">
+        <command>PackageManager</command>
+      </action>
+    </item>
+    <item label="System Monitor">
+      <action name="Execute">
+        <command>SystemMonitor</command>
+      </action>
+    </item>
+    <item label="Snapshot Manager">
+      <action name="Execute">
+        <command>SnapshotManager</command>
+      </action>
+    </item>
+    <item label="Repair Mode">
+      <action name="Execute">
+        <command>RepairMode</command>
+      </action>
+    </item>
     <item label="Terminal">
       <action name="Execute">
         <command>Terminal</command>
@@ -2220,8 +3424,28 @@ chmod 0755 /mnt/usr/sbin/ylva-stop-desktop
 
 cat >/mnt/usr/bin/Desktop <<'EOF'
 #!/bin/sh
-ylva-control mode desktop-starting
+set -u
+export PATH=/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+
+force=0
+case "${1:-}" in
+    --force|-f)
+        force=1
+        ;;
+esac
+
 user="${USER:-ylva}"
+home="${HOME:-/home/$user}"
+if [ "$force" != 1 ] && [ -f "$home/.ylvaos-safe-console" ]; then
+    echo "YlvaOS Repair Mode safe-console is enabled."
+    echo "Desktop startup is disabled so you can repair broken GUI configuration from the console."
+    echo "Run YlvaOS repair desktop --yes to reset desktop config and re-enable normal Desktop startup."
+    echo "Run Desktop --force for a one-time desktop start without clearing the marker."
+    ylva-control mode kernel
+    exit 1
+fi
+
+ylva-control mode desktop-starting
 if [ "$(id -u)" -eq 0 ]; then
     /usr/sbin/ylva-start-desktop "$user" &
 else
@@ -2275,7 +3499,10 @@ emit_host() {
 }
 
 usage() {
-    echo "usage: YlvaOS status | YlvaOS update | YlvaOS settings | YlvaOS files [path]"
+    echo "usage: YlvaOS status | YlvaOS update | YlvaOS settings | YlvaOS files [path] | YlvaOS monitor"
+    echo "       YlvaOS snapshot list | create <name> [memo] | restore <name> | delete <name>"
+    echo "       YlvaOS package status|update|search <name>|install [--yes] <package...>|remove [--yes] <package...>"
+    echo "       YlvaOS repair status|desktop [--yes]|packages [--check|--yes]|user-config [--yes]|safe-console [--yes]"
     echo "       YlvaOS set memory <MiB> | YlvaOS set disk <MiB>"
     echo "       YlvaOS set desktop <WxH>|<width> <height> | YlvaOS set fps <FPS>"
     echo "       YlvaOS setup wine [directmusic] | YlvaOS setup font|audio"
@@ -2287,6 +3514,105 @@ is_positive_int() {
     esac
 
     [ "$1" -gt 0 ] 2>/dev/null
+}
+
+valid_snapshot_name() {
+    name="${1:-}"
+    case "$name" in
+        ''|.|..|.*|*.|*[!abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-]*)
+            return 1
+            ;;
+    esac
+
+    device_name="${name%%.*}"
+    upper="$(printf '%s' "$device_name" | tr '[:lower:]' '[:upper:]')"
+    case "$upper" in
+        CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])
+            return 1
+            ;;
+    esac
+
+    [ "${#name}" -le 64 ]
+}
+
+memo_base64() {
+    printf '%s' "$*" | base64 | tr -d '\n'
+}
+
+confirm_snapshot() {
+    action="$1"
+    name="$2"
+    assume_yes="$3"
+    if [ "$assume_yes" = 1 ]; then
+        return 0
+    fi
+
+    if command -v dialog >/dev/null 2>&1 && [ -t 1 ]; then
+        dialog --clear --yesno "Snapshot $action '$name'?" 8 64
+        return $?
+    fi
+
+    printf 'Snapshot %s %s? Type yes to continue: ' "$action" "$name"
+    IFS= read -r answer || answer=
+    [ "$answer" = yes ]
+}
+
+snapshot_command() {
+    subcommand="${1:-list}"
+    shift || true
+    case "$subcommand" in
+        list|ls)
+            ylva-control --reply snapshot list
+            ;;
+        create|save)
+            name="${1:-}"
+            shift || true
+            if ! valid_snapshot_name "$name"; then
+                echo "snapshot name may contain only ASCII letters, digits, dot, underscore, and hyphen; it cannot start or end with a dot or use a Windows reserved device name"
+                exit 2
+            fi
+            memo="$(memo_base64 "$*")"
+            ylva-control --reply snapshot create "$name" "$memo"
+            ;;
+        restore)
+            name="${1:-}"
+            shift || true
+            assume_yes=0
+            if [ "${1:-}" = "--yes" ] || [ "${1:-}" = "-y" ]; then
+                assume_yes=1
+            fi
+            if ! valid_snapshot_name "$name"; then
+                echo "invalid snapshot name"
+                exit 2
+            fi
+            if confirm_snapshot restore "$name" "$assume_yes"; then
+                ylva-control --reply snapshot restore "$name"
+            else
+                echo "Snapshot restore cancelled."
+            fi
+            ;;
+        delete|remove|rm)
+            name="${1:-}"
+            shift || true
+            assume_yes=0
+            if [ "${1:-}" = "--yes" ] || [ "${1:-}" = "-y" ]; then
+                assume_yes=1
+            fi
+            if ! valid_snapshot_name "$name"; then
+                echo "invalid snapshot name"
+                exit 2
+            fi
+            if confirm_snapshot delete "$name" "$assume_yes"; then
+                ylva-control --reply snapshot delete "$name"
+            else
+                echo "Snapshot delete cancelled."
+            fi
+            ;;
+        *)
+            usage
+            exit 2
+            ;;
+    esac
 }
 
 case "${1:-}" in
@@ -2315,6 +3641,22 @@ case "${1:-}" in
         else
             Files
         fi
+        ;;
+    monitor|system-monitor|systemmonitor)
+        shift || true
+        SystemMonitor "$@"
+        ;;
+    snapshot|snapshots)
+        shift || true
+        snapshot_command "$@"
+        ;;
+    package|packages|pkg)
+        shift || true
+        /usr/lib/ylvaos/package-helper "$@"
+        ;;
+    repair)
+        shift || true
+        /usr/lib/ylvaos/repair-mode "$@"
         ;;
     set)
         case "${2:-}" in
@@ -2452,8 +3794,16 @@ usr/bin/Files
 usr/bin/files
 usr/bin/Kernel
 usr/bin/kernel
+usr/bin/PackageManager
+usr/bin/packagemanager
+usr/bin/RepairMode
+usr/bin/repairmode
+usr/bin/SnapshotManager
+usr/bin/snapshotmanager
 usr/bin/Settings
 usr/bin/settings
+usr/bin/SystemMonitor
+usr/bin/systemmonitor
 usr/bin/Terminal
 usr/bin/terminal
 usr/bin/YlvaOS
@@ -2474,11 +3824,15 @@ usr/local/bin/winefile
 usr/local/bin/wineserver
 usr/lib/ylvaos/managed-files
 usr/lib/ylvaos/configure-wine-midi
+usr/lib/ylvaos/package-helper
+usr/lib/ylvaos/repair-mode
 usr/lib/ylvaos/registry-helpers
+usr/lib/ylvaos/snapshot-tui
 usr/lib/ylvaos/settings-tui
 usr/lib/ylvaos/setup-audio
 usr/lib/ylvaos/setup-font
 usr/lib/ylvaos/setup-wine
+usr/lib/ylvaos/system-monitor-tui
 usr/lib/ylvaos/update-from-mod
 usr/lib/ylvaos/wine-env
 usr/local/bin/ylva-desktop-session

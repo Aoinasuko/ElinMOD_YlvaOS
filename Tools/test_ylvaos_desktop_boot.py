@@ -857,7 +857,144 @@ def main() -> int:
                 30,
             )
             if "__YLVA_SETTINGS_STATUS_HOSTINPUT__:0" not in console_snapshot(console):
-                raise RuntimeError("The host-input channel did not deliver the left click")
+                for _ in range(2):
+                    host_input.send_pointer(settings_click_x, settings_click_y, 0, 0)
+                    time.sleep(0.5)
+                    host_input.send_pointer(settings_click_x, settings_click_y, 0, 1)
+                    time.sleep(0.15)
+                    host_input.send_pointer(settings_click_x, settings_click_y, 1, 0)
+                    time.sleep(1)
+                    run_command(
+                        console,
+                        "DISPLAY=:0 sh -c 'if xdotool search --name \"YlvaOS Settings\" >/dev/null 2>&1; then status=1; else status=0; fi; printf \"\\137\\137YLVA_SETTINGS_STATUS_HOSTINPUT_RETRY\\137\\137:%s\\n\" \"$status\"'",
+                        "YlvaOS:~$",
+                        30,
+                    )
+                    if "__YLVA_SETTINGS_STATUS_HOSTINPUT_RETRY__:0" in console_snapshot(console):
+                        break
+                else:
+                    raise RuntimeError("The host-input channel did not deliver the left click")
+            run_command(
+                console,
+                "DISPLAY=:0 SystemMonitor; sleep 3; "
+                "DISPLAY=:0 xdotool search --name 'YlvaOS System Monitor' | head -n 1 >/tmp/ylva-monitor-window; "
+                "test -s /tmp/ylva-monitor-window && DISPLAY=:0 xdotool windowkill \"$(cat /tmp/ylva-monitor-window)\" >/dev/null 2>&1; "
+                "test -s /tmp/ylva-monitor-window && printf '\\137\\137YLVA_MONITOR_VISIBLE\\137\\137\\n'",
+                "YlvaOS:~$",
+                30,
+            )
+            if "__YLVA_MONITOR_VISIBLE__" not in console_snapshot(console):
+                raise RuntimeError("YlvaOS System Monitor did not open on the desktop")
+            run_command(
+                console,
+                "DISPLAY=:0 PackageManager; sleep 3; "
+                "DISPLAY=:0 xdotool search --name 'YlvaOS Package Manager' | head -n 1 >/tmp/ylva-package-window; "
+                "test -s /tmp/ylva-package-window && DISPLAY=:0 xdotool windowkill \"$(cat /tmp/ylva-package-window)\" >/dev/null 2>&1; "
+                "test -s /tmp/ylva-package-window && printf '\\137\\137YLVA_PACKAGE_MANAGER_VISIBLE\\137\\137\\n'",
+                "YlvaOS:~$",
+                30,
+            )
+            if "__YLVA_PACKAGE_MANAGER_VISIBLE__" not in console_snapshot(console):
+                raise RuntimeError("YlvaOS Package Manager did not open on the desktop")
+            run_command(
+                console,
+                "DISPLAY=:0 RepairMode; sleep 3; "
+                "DISPLAY=:0 xdotool search --name 'YlvaOS Repair Mode' | head -n 1 >/tmp/ylva-repair-window; "
+                "test -s /tmp/ylva-repair-window && DISPLAY=:0 xdotool windowkill \"$(cat /tmp/ylva-repair-window)\" >/dev/null 2>&1; "
+                "test -s /tmp/ylva-repair-window && printf '\\137\\137YLVA_REPAIR_MODE_VISIBLE\\137\\137\\n'",
+                "YlvaOS:~$",
+                30,
+            )
+            if "__YLVA_REPAIR_MODE_VISIBLE__" not in console_snapshot(console):
+                raise RuntimeError("YlvaOS Repair Mode did not open on the desktop")
+            run_command(
+                console,
+                "YlvaOS package status >/tmp/ylva-package-status 2>&1 && "
+                "grep -q 'YlvaOS Package Manager Helper' /tmp/ylva-package-status && "
+                "(YlvaOS package update >/tmp/ylva-package-offline 2>&1 || true) && "
+                "grep -q 'Network is disabled' /tmp/ylva-package-offline && "
+                "grep -q ConnectNetwork /tmp/ylva-package-offline && "
+                "YlvaOS repair status >/tmp/ylva-repair-status 2>&1 && "
+                "grep -q 'YlvaOS Repair Mode' /tmp/ylva-repair-status && "
+                "printf '\\137\\137YLVA_PACKAGE_REPAIR_QUICK_CLI_OK\\137\\137\\n'",
+                "YlvaOS:~$",
+                45,
+            )
+            if "__YLVA_PACKAGE_REPAIR_QUICK_CLI_OK__" not in console_snapshot(console):
+                raise RuntimeError("YlvaOS package or repair CLI did not report the expected quick-path state")
+
+            network_errors: list[Exception] = []
+
+            def enable_network_after_guest_request() -> None:
+                try:
+                    control.wait_for("network connect", 40)
+                    qmp.connect_user_network()
+                except Exception as exc:
+                    network_errors.append(exc)
+
+            network_thread = threading.Thread(target=enable_network_after_guest_request, daemon=True)
+            network_thread.start()
+            run_command(
+                console,
+                "printf 'yes\\n' | ConnectNetwork; ip route | grep -q '^default ' && printf '\\137\\137YLVA_QUICK_NETWORK_CONNECTED\\137\\137\\n'",
+                "YlvaOS:~$",
+                90,
+            )
+            network_thread.join(timeout=10)
+            if network_errors:
+                raise network_errors[0]
+            if "__YLVA_QUICK_NETWORK_CONNECTED__" not in console_snapshot(console):
+                raise RuntimeError("ConnectNetwork did not establish a default route in quick path")
+            run_command(
+                console,
+                "YlvaOS package update >/tmp/ylva-package-update 2>&1 && "
+                "YlvaOS package search htop >/tmp/ylva-package-search 2>&1 && "
+                "grep -q '^htop-' /tmp/ylva-package-search && "
+                "YlvaOS package install --yes htop >/tmp/ylva-package-install 2>&1 && "
+                "apk info -e htop >/dev/null 2>&1 && "
+                "YlvaOS package remove --yes htop >/tmp/ylva-package-remove 2>&1 && "
+                "! apk info -e htop >/dev/null 2>&1 && "
+                "grep -q 'apk add htop' ~/YlvaOS/logs/package.log && "
+                "grep -q 'apk del htop' ~/YlvaOS/logs/package.log && "
+                "printf '\\137\\137YLVA_PACKAGE_INSTALL_REMOVE_OK\\137\\137\\n'",
+                "YlvaOS:~$",
+                300,
+            )
+            if "__YLVA_PACKAGE_INSTALL_REMOVE_OK__" not in console_snapshot(console):
+                run_command(
+                    console,
+                    "printf '\\137\\137YLVA_PACKAGE_DIAG\\137\\137\\n'; "
+                    "for file in /tmp/ylva-package-update /tmp/ylva-package-search /tmp/ylva-package-install /tmp/ylva-package-remove ~/YlvaOS/logs/package.log; do "
+                    "echo --- $file; tail -n 80 \"$file\" 2>/dev/null || true; "
+                    "done; "
+                    "printf '\\137\\137YLVA_PACKAGE_DIAG_END\\137\\137\\n'",
+                    "YlvaOS:~$",
+                    45,
+                )
+                raise RuntimeError("YlvaOS Package Manager did not search, install, remove, or log htop correctly")
+            run_command(
+                console,
+                "YlvaOS monitor --once >/tmp/ylva-monitor-once; "
+                "grep -q 'YlvaOS System Monitor' /tmp/ylva-monitor-once && "
+                "grep -q 'Guest CPU:' /tmp/ylva-monitor-once && "
+                "grep -q 'Guest memory:' /tmp/ylva-monitor-once && "
+                "grep -q 'Root disk:' /tmp/ylva-monitor-once && "
+                "grep -q 'Guest network:' /tmp/ylva-monitor-once && "
+                "grep -q 'PID  PROCESS' /tmp/ylva-monitor-once && "
+                "(sleep 60 & pid=$!; "
+                "printf 'no\\n' | /usr/lib/ylvaos/system-monitor-tui --kill \"$pid\" >/tmp/ylva-kill-cancel 2>&1 || true; "
+                "if ! kill -0 \"$pid\" 2>/dev/null; then exit 1; fi; "
+                "printf 'yes\\n' | /usr/lib/ylvaos/system-monitor-tui --kill \"$pid\" >/tmp/ylva-kill-confirm 2>&1 || true; "
+                "for i in 1 2 3 4 5; do kill -0 \"$pid\" 2>/dev/null || break; sleep 1; done; "
+                "if kill -0 \"$pid\" 2>/dev/null; then exit 1; fi; "
+                "/usr/lib/ylvaos/system-monitor-tui --kill 1 --yes >/tmp/ylva-kill-protected 2>&1 || true; "
+                "grep -q 'Refusing to terminate protected process PID 1' /tmp/ylva-kill-protected && "
+                "printf '\\137\\137YLVA_MONITOR_QUICK_OK\\137\\137\\n')",
+                "YlvaOS:~$",
+                90,
+            )
+            if "__YLVA_MONITOR_QUICK_OK__" not in console_snapshot(console):
+                raise RuntimeError("YlvaOS System Monitor quick path did not report or control processes correctly")
             run_command(
                 console,
                 "mkdir -p ~/ClickTest/OpenMe; DISPLAY=:0 Files ~/ClickTest; sleep 3; "
@@ -887,14 +1024,54 @@ def main() -> int:
             run_command(console, "poweroff", "Power down", 60)
             process.wait(timeout=60)
             return 0
-        run_command(console, "command -v Desktop && command -v Kernel && command -v ConnectNetwork && command -v Settings && command -v Files && command -v pcmanfm && command -v mc && command -v dialog && command -v ylva-splash && command -v ylva-host-agent && test -x /usr/lib/ylvaos/update-from-mod", "YlvaOS:~$", 60)
+        run_command(console, "command -v Desktop && command -v Kernel && command -v ConnectNetwork && command -v Settings && command -v Files && command -v SnapshotManager && command -v SystemMonitor && command -v PackageManager && command -v RepairMode && command -v pcmanfm && command -v mc && command -v dialog && command -v ylva-splash && command -v ylva-host-agent && test -x /usr/lib/ylvaos/update-from-mod && test -x /usr/lib/ylvaos/snapshot-tui && test -x /usr/lib/ylvaos/system-monitor-tui && test -x /usr/lib/ylvaos/package-helper && test -x /usr/lib/ylvaos/repair-mode", "YlvaOS:~$", 60)
         snapshot = console_snapshot(console)
-        for path in ["/usr/bin/Desktop", "/usr/bin/Kernel", "/usr/bin/ConnectNetwork", "/usr/bin/Settings", "/usr/bin/Files", "/usr/bin/pcmanfm", "/usr/bin/mc", "/usr/bin/dialog", "/usr/bin/ylva-splash", "/usr/bin/ylva-host-agent"]:
+        for path in ["/usr/bin/Desktop", "/usr/bin/Kernel", "/usr/bin/ConnectNetwork", "/usr/bin/Settings", "/usr/bin/Files", "/usr/bin/SnapshotManager", "/usr/bin/SystemMonitor", "/usr/bin/PackageManager", "/usr/bin/RepairMode", "/usr/bin/pcmanfm", "/usr/bin/mc", "/usr/bin/dialog", "/usr/bin/ylva-splash", "/usr/bin/ylva-host-agent", "/usr/lib/ylvaos/snapshot-tui", "/usr/lib/ylvaos/system-monitor-tui", "/usr/lib/ylvaos/package-helper", "/usr/lib/ylvaos/repair-mode"]:
             if path not in snapshot:
                 raise RuntimeError(f"{path} was not found in the guest")
         run_command(console, "YlvaOS update", "YlvaOS:~$", 40)
         if "YlvaOS is already up to date." not in console_snapshot(console):
             raise RuntimeError("YlvaOS update did not detect the bundled same-version payload")
+        run_command(
+            console,
+            "YlvaOS monitor --once >/tmp/ylva-monitor-once; "
+            "grep -q 'YlvaOS System Monitor' /tmp/ylva-monitor-once && "
+            "grep -q 'Guest CPU:' /tmp/ylva-monitor-once && "
+            "grep -q 'Guest memory:' /tmp/ylva-monitor-once && "
+            "grep -q 'Root disk:' /tmp/ylva-monitor-once && "
+            "grep -q 'Guest network:' /tmp/ylva-monitor-once && "
+            "grep -q 'PID  PROCESS' /tmp/ylva-monitor-once && "
+            "(sleep 60 & pid=$!; "
+            "printf 'no\\n' | /usr/lib/ylvaos/system-monitor-tui --kill \"$pid\" >/tmp/ylva-kill-cancel 2>&1 || true; "
+            "if ! kill -0 \"$pid\" 2>/dev/null; then exit 1; fi; "
+            "printf 'yes\\n' | /usr/lib/ylvaos/system-monitor-tui --kill \"$pid\" >/tmp/ylva-kill-confirm 2>&1 || true; "
+            "for i in 1 2 3 4 5; do kill -0 \"$pid\" 2>/dev/null || break; sleep 1; done; "
+            "if kill -0 \"$pid\" 2>/dev/null; then exit 1; fi; "
+            "/usr/lib/ylvaos/system-monitor-tui --kill 1 --yes >/tmp/ylva-kill-protected 2>&1 || true; "
+            "grep -q 'Refusing to terminate protected process PID 1' /tmp/ylva-kill-protected && "
+            "printf '\\137\\137YLVA_MONITOR_OK\\137\\137\\n')",
+            "YlvaOS:~$",
+            90,
+        )
+        snapshot = console_snapshot(console)
+        if "__YLVA_MONITOR_OK__" not in snapshot:
+            raise RuntimeError("YlvaOS System Monitor did not report or control processes correctly")
+        run_command(
+            console,
+            "YlvaOS package status >/tmp/ylva-package-status 2>&1 && "
+            "grep -q 'YlvaOS Package Manager Helper' /tmp/ylva-package-status && "
+            "(YlvaOS package update >/tmp/ylva-package-offline 2>&1 || true) && "
+            "grep -q 'Network is disabled' /tmp/ylva-package-offline && "
+            "grep -q ConnectNetwork /tmp/ylva-package-offline && "
+            "YlvaOS repair status >/tmp/ylva-repair-status 2>&1 && "
+            "grep -q 'YlvaOS Repair Mode' /tmp/ylva-repair-status && "
+            "printf '\\137\\137YLVA_PACKAGE_REPAIR_CLI_OK\\137\\137\\n'",
+            "YlvaOS:~$",
+            45,
+        )
+        snapshot = console_snapshot(console)
+        if "__YLVA_PACKAGE_REPAIR_CLI_OK__" not in snapshot:
+            raise RuntimeError("YlvaOS package or repair CLI did not report the expected state")
         run_command(
             console,
             "printf 'no\\n' | ConnectNetwork; printf '\\137\\137YLVA_NETWORK_CANCEL_DONE\\137\\137\\n'",
@@ -1046,6 +1223,10 @@ def main() -> int:
             "grep -q 'action name=\"ToggleMaximize\"' ~/.config/openbox/rc.xml && "
             "grep -q 'context name=\"Client\"' ~/.config/openbox/rc.xml && "
             "grep -q 'button=\"A-Left\"' ~/.config/openbox/rc.xml && "
+            "grep -q 'PackageManager' ~/.config/openbox/menu.xml && "
+            "grep -q 'SystemMonitor' ~/.config/openbox/menu.xml && "
+            "grep -q 'SnapshotManager' ~/.config/openbox/menu.xml && "
+            "grep -q 'RepairMode' ~/.config/openbox/menu.xml && "
             "printf '\\137\\137YLVA_WINDOW_BUTTON_BINDS_OK\\137\\137\\n'",
             "YlvaOS:~$",
             30,
