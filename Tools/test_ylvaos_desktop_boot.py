@@ -814,7 +814,7 @@ def main() -> int:
         qmp.connect()
         console.wait_for_any(["YlvaOS:~$"], 180)
         snapshot = console_snapshot(console)
-        if "^           Ylva OS" not in snapshot or "(  * *)   by aoi_nasuko" not in snapshot or "Alpine Linux 3.24.1 base / YlvaOS 0.04" not in snapshot:
+        if "^           Ylva OS" not in snapshot or "(  * *)   by aoi_nasuko" not in snapshot or "Alpine Linux 3.24.1 base / YlvaOS 0.05" not in snapshot:
             raise RuntimeError("YlvaOS login splash was not printed")
         width, height = probe.read_framebuffer_size()
         print(f"[vnc] framebuffer {width}x{height}")
@@ -876,6 +876,17 @@ def main() -> int:
                     raise RuntimeError("The host-input channel did not deliver the left click")
             run_command(
                 console,
+                "DISPLAY=:0 AppLauncher; sleep 3; "
+                "DISPLAY=:0 xdotool search --name 'YlvaOS Application Launcher' | head -n 1 >/tmp/ylva-launcher-window; "
+                "test -s /tmp/ylva-launcher-window && DISPLAY=:0 xdotool windowkill \"$(cat /tmp/ylva-launcher-window)\" >/dev/null 2>&1; "
+                "test -s /tmp/ylva-launcher-window && printf '\\137\\137YLVA_APP_LAUNCHER_VISIBLE\\137\\137\\n'",
+                "YlvaOS:~$",
+                30,
+            )
+            if "__YLVA_APP_LAUNCHER_VISIBLE__" not in console_snapshot(console):
+                raise RuntimeError("YlvaOS Application Launcher did not open on the desktop")
+            run_command(
+                console,
                 "DISPLAY=:0 SystemMonitor; sleep 3; "
                 "DISPLAY=:0 xdotool search --name 'YlvaOS System Monitor' | head -n 1 >/tmp/ylva-monitor-window; "
                 "test -s /tmp/ylva-monitor-window && DISPLAY=:0 xdotool windowkill \"$(cat /tmp/ylva-monitor-window)\" >/dev/null 2>&1; "
@@ -907,6 +918,47 @@ def main() -> int:
             )
             if "__YLVA_REPAIR_MODE_VISIBLE__" not in console_snapshot(console):
                 raise RuntimeError("YlvaOS Repair Mode did not open on the desktop")
+            run_command(
+                console,
+                "mkdir -p ~/Documents; rm -f ~/Documents/ylva-editor-smoke.txt; "
+                "DISPLAY=:0 TextEditor ~/Documents/ylva-editor-smoke.txt & sleep 4; "
+                "DISPLAY=:0 xdotool search --name 'YlvaOS Text Editor' | tail -n 1 >/tmp/ylva-editor-window; "
+                "test -s /tmp/ylva-editor-window && DISPLAY=:0 xdotool windowactivate \"$(cat /tmp/ylva-editor-window)\" windowfocus \"$(cat /tmp/ylva-editor-window)\"; "
+                "test -s /tmp/ylva-editor-window && printf '\\137\\137YLVA_TEXT_EDITOR_VISIBLE\\137\\137\\n'",
+                "YlvaOS:~$",
+                45,
+            )
+            if "__YLVA_TEXT_EDITOR_VISIBLE__" not in console_snapshot(console):
+                raise RuntimeError("YlvaOS Text Editor did not open on the desktop")
+            run_command(
+                console,
+                "DISPLAY=:0 sh -c 'win=$(cat /tmp/ylva-editor-window); xdotool windowactivate --sync \"$win\" windowfocus \"$win\"'; "
+                "printf '\\137\\137YLVA_TEXT_EDITOR_FOCUSED\\137\\137\\n'",
+                "YlvaOS:~$",
+                30,
+            )
+            host_input.send_paste("YlvaOS editor paste OK\n")
+            time.sleep(4)
+            run_command(
+                console,
+                "DISPLAY=:0 sh -c 'win=$(cat /tmp/ylva-editor-window); xdotool windowactivate --sync \"$win\" windowfocus \"$win\" key --clearmodifiers ctrl+o Return ctrl+x'; "
+                "sleep 3; "
+                "grep -q 'YlvaOS editor paste OK' ~/Documents/ylva-editor-smoke.txt && "
+                "printf '\\137\\137YLVA_TEXT_EDITOR_SAVE_OK\\137\\137\\n'",
+                "YlvaOS:~$",
+                45,
+            )
+            if "__YLVA_TEXT_EDITOR_SAVE_OK__" not in console_snapshot(console):
+                run_command(
+                    console,
+                    "printf '\\137\\137YLVA_TEXT_EDITOR_DIAG\\137\\137\\n'; "
+                    "od -An -tx1 ~/Documents/ylva-editor-smoke.txt 2>/dev/null || true; "
+                    "DISPLAY=:0 xdotool search --name 'YlvaOS Text Editor' 2>/dev/null || true; "
+                    "printf '\\137\\137YLVA_TEXT_EDITOR_DIAG_END\\137\\137\\n'",
+                    "YlvaOS:~$",
+                    30,
+                )
+                raise RuntimeError("YlvaOS Text Editor did not save pasted text")
             run_command(
                 console,
                 "YlvaOS package status >/tmp/ylva-package-status 2>&1 && "
@@ -1024,14 +1076,39 @@ def main() -> int:
             run_command(console, "poweroff", "Power down", 60)
             process.wait(timeout=60)
             return 0
-        run_command(console, "command -v Desktop && command -v Kernel && command -v ConnectNetwork && command -v Settings && command -v Files && command -v SnapshotManager && command -v SystemMonitor && command -v PackageManager && command -v RepairMode && command -v pcmanfm && command -v mc && command -v dialog && command -v ylva-splash && command -v ylva-host-agent && test -x /usr/lib/ylvaos/update-from-mod && test -x /usr/lib/ylvaos/snapshot-tui && test -x /usr/lib/ylvaos/system-monitor-tui && test -x /usr/lib/ylvaos/package-helper && test -x /usr/lib/ylvaos/repair-mode", "YlvaOS:~$", 60)
+        run_command(console, "command -v Desktop && command -v Kernel && command -v ConnectNetwork && command -v Settings && command -v Files && command -v AppLauncher && command -v TextEditor && command -v nano && command -v SnapshotManager && command -v SystemMonitor && command -v PackageManager && command -v RepairMode && command -v pcmanfm && command -v mc && command -v dialog && command -v ylva-splash && command -v ylva-host-agent && test -x /usr/lib/ylvaos/update-from-mod && test -x /usr/lib/ylvaos/app-launcher && test -x /usr/lib/ylvaos/text-editor && test -x /usr/lib/ylvaos/snapshot-tui && test -x /usr/lib/ylvaos/system-monitor-tui && test -x /usr/lib/ylvaos/package-helper && test -x /usr/lib/ylvaos/repair-mode", "YlvaOS:~$", 60)
         snapshot = console_snapshot(console)
-        for path in ["/usr/bin/Desktop", "/usr/bin/Kernel", "/usr/bin/ConnectNetwork", "/usr/bin/Settings", "/usr/bin/Files", "/usr/bin/SnapshotManager", "/usr/bin/SystemMonitor", "/usr/bin/PackageManager", "/usr/bin/RepairMode", "/usr/bin/pcmanfm", "/usr/bin/mc", "/usr/bin/dialog", "/usr/bin/ylva-splash", "/usr/bin/ylva-host-agent", "/usr/lib/ylvaos/snapshot-tui", "/usr/lib/ylvaos/system-monitor-tui", "/usr/lib/ylvaos/package-helper", "/usr/lib/ylvaos/repair-mode"]:
+        for path in ["/usr/bin/Desktop", "/usr/bin/Kernel", "/usr/bin/ConnectNetwork", "/usr/bin/Settings", "/usr/bin/Files", "/usr/bin/AppLauncher", "/usr/bin/TextEditor", "/usr/bin/nano", "/usr/bin/SnapshotManager", "/usr/bin/SystemMonitor", "/usr/bin/PackageManager", "/usr/bin/RepairMode", "/usr/bin/pcmanfm", "/usr/bin/mc", "/usr/bin/dialog", "/usr/bin/ylva-splash", "/usr/bin/ylva-host-agent", "/usr/lib/ylvaos/app-launcher", "/usr/lib/ylvaos/text-editor", "/usr/lib/ylvaos/snapshot-tui", "/usr/lib/ylvaos/system-monitor-tui", "/usr/lib/ylvaos/package-helper", "/usr/lib/ylvaos/repair-mode"]:
             if path not in snapshot:
                 raise RuntimeError(f"{path} was not found in the guest")
         run_command(console, "YlvaOS update", "YlvaOS:~$", 40)
         if "YlvaOS is already up to date." not in console_snapshot(console):
             raise RuntimeError("YlvaOS update did not detect the bundled same-version payload")
+        run_command(
+            console,
+            "AppLauncher --list >/tmp/ylva-launcher-list && "
+            "YlvaOS launch --list >/tmp/ylva-launcher-alias-list && "
+            "grep -q '1) Terminal' /tmp/ylva-launcher-list && "
+            "grep -q '2) File Manager' /tmp/ylva-launcher-list && "
+            "grep -q '3) Settings' /tmp/ylva-launcher-list && "
+            "grep -q '4) Text Editor' /tmp/ylva-launcher-list && "
+            "grep -q '5) System Monitor' /tmp/ylva-launcher-list && "
+            "grep -q '1) Terminal' /tmp/ylva-launcher-alias-list && "
+            "TextEditor status >/tmp/ylva-editor-status && "
+            "YlvaOS edit status >/tmp/ylva-editor-alias-status && "
+            "grep -q 'YlvaOS Text Editor' /tmp/ylva-editor-status && "
+            "grep -q 'Backend: nano' /tmp/ylva-editor-status && "
+            "grep -q 'YlvaOS Text Editor' /tmp/ylva-editor-alias-status && "
+            "[ \"$EDITOR\" = TextEditor ] && [ \"$VISUAL\" = TextEditor ] && "
+            "TextEditor check ~/Import/example.txt >/tmp/ylva-editor-check && "
+            "grep -q 'Mode: read-only' /tmp/ylva-editor-check && "
+            "printf '\\137\\137YLVA_LAUNCHER_EDITOR_OK\\137\\137\\n'",
+            "YlvaOS:~$",
+            45,
+        )
+        snapshot = console_snapshot(console)
+        if "__YLVA_LAUNCHER_EDITOR_OK__" not in snapshot:
+            raise RuntimeError("YlvaOS Application Launcher or Text Editor did not report the expected state")
         run_command(
             console,
             "YlvaOS monitor --once >/tmp/ylva-monitor-once; "
@@ -1223,6 +1300,9 @@ def main() -> int:
             "grep -q 'action name=\"ToggleMaximize\"' ~/.config/openbox/rc.xml && "
             "grep -q 'context name=\"Client\"' ~/.config/openbox/rc.xml && "
             "grep -q 'button=\"A-Left\"' ~/.config/openbox/rc.xml && "
+            "grep -q 'C-A-space' ~/.config/openbox/rc.xml && "
+            "grep -q 'AppLauncher' ~/.config/openbox/menu.xml && "
+            "grep -q 'TextEditor' ~/.config/openbox/menu.xml && "
             "grep -q 'PackageManager' ~/.config/openbox/menu.xml && "
             "grep -q 'SystemMonitor' ~/.config/openbox/menu.xml && "
             "grep -q 'SnapshotManager' ~/.config/openbox/menu.xml && "

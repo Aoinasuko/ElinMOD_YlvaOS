@@ -57,7 +57,7 @@ internal static class Program
         string list = manager.FormatSnapshotList();
         Assert(list.Contains("base1"), "snapshot list missing base1");
         Assert(list.Contains("before package install"), "snapshot list missing memo");
-        Assert(list.Contains("0.04"), "snapshot list missing YlvaOS version");
+        Assert(list.Contains("0.05"), "snapshot list missing YlvaOS version");
 
         YlvaSnapshotManager runningManager = new YlvaSnapshotManager(rootDirectory, diskPath, qemuImgPath, delegate { return true; });
         ExpectUserException(delegate { runningManager.CreateSnapshot("live", "running"); }, "disabled while the VM is running");
@@ -73,7 +73,7 @@ internal static class Program
         Directory.CreateDirectory(brokenDirectory);
         File.WriteAllText(
             Path.Combine(brokenDirectory, "metadata.json"),
-            "{\n  \"schemaVersion\": 1,\n  \"name\": \"broken\",\n  \"createdUtc\": \"2026-09-02T00:00:00Z\",\n  \"sizeBytes\": 4,\n  \"memo\": \"corrupt fixture\",\n  \"ylvaOsVersion\": \"0.04\"\n}\n");
+            "{\n  \"schemaVersion\": 1,\n  \"name\": \"broken\",\n  \"createdUtc\": \"2026-09-02T00:00:00Z\",\n  \"sizeBytes\": 4,\n  \"memo\": \"corrupt fixture\",\n  \"ylvaOsVersion\": \"0.05\"\n}\n");
         File.WriteAllText(Path.Combine(brokenDirectory, "disk.qcow2"), "bad");
         string brokenList = manager.FormatSnapshotList();
         Assert(brokenList.Contains("broken"), "broken snapshot missing from list");

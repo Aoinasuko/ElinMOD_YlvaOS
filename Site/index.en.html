@@ -275,13 +275,13 @@
           <a href="index.en.html" aria-current="page">English</a>
         </div>
         <h1>YlvaOS</h1>
-        <p class="lead">YlvaOS is a small real-Linux VM operating system launched from computer furniture inside Elin. YlvaOS 0.04 is based on Alpine Linux 3.24.1 and provides both kernel console mode and a lightweight desktop mode.</p>
+        <p class="lead">YlvaOS is a small real-Linux VM operating system launched from computer furniture inside Elin. YlvaOS 0.05 is based on Alpine Linux 3.24.1 and provides both kernel console mode and a lightweight desktop mode.</p>
       </div>
       <pre aria-label="YlvaOS splash">-----------------------------
  ^           Ylva OS
 (  * *)   by aoi_nasuko
 -----------------------------
-Alpine Linux 3.24.1 base / YlvaOS 0.04</pre>
+Alpine Linux 3.24.1 base / YlvaOS 0.05</pre>
     </div>
     <nav class="wrap" aria-label="Page navigation">
       <a href="#overview">Overview</a>
@@ -362,6 +362,10 @@ Alpine Linux 3.24.1 base / YlvaOS 0.04</pre>
         <div>Returns from desktop mode to kernel console mode.</div>
         <div>Terminal [title]</div>
         <div>Opens a YlvaOS Terminal window on the desktop. <code>Ctrl+Alt+T</code> also opens it.</div>
+        <div>AppLauncher</div>
+        <div>Opens a lightweight launcher for Terminal, File Manager, Settings, Text Editor, System Monitor, and other commands. <code>Ctrl+Alt+Space</code> also opens it.</div>
+        <div>TextEditor [file]</div>
+        <div>Opens a lightweight nano-first editor on the desktop or console. vim is also bundled. Files under <code>~/Import</code> open read-only.</div>
         <div>Settings</div>
         <div>Opens YlvaOS Settings.</div>
         <div>Files [path]</div>
@@ -374,6 +378,10 @@ Alpine Linux 3.24.1 base / YlvaOS 0.04</pre>
         <div>Shows YlvaOS and Linux kernel status.</div>
         <div>YlvaOS update</div>
         <div>Checks the installed MOD directory and updates YlvaOS if a newer bundled OS version is available, then reboots. Startup also reports when a newer bundled version is available.</div>
+        <div>YlvaOS launch [app]</div>
+        <div>Opens Application Launcher or starts the named fixed entry/PATH command.</div>
+        <div>YlvaOS edit [file]</div>
+        <div>Opens Text Editor. The default <code>EDITOR</code> / <code>VISUAL</code> values are set to <code>TextEditor</code>.</div>
         <div>YlvaOS settings</div>
         <div>Opens YlvaOS Settings.</div>
         <div>YlvaOS files [path]</div>
@@ -407,7 +415,7 @@ Alpine Linux 3.24.1 base / YlvaOS 0.04</pre>
         <div>vm status / vm paths / vm start / vm stop</div>
         <div>Helper commands used in the pre-VM management console.</div>
       </div>
-      <p>Some commands also have lowercase aliases, such as <code>desktop</code>, <code>kernel</code>, <code>terminal</code>, <code>settings</code>, <code>files</code>, <code>packagemanager</code>, <code>repairmode</code>, and <code>connectnetwork</code>. Snapshot commands can also be used from the pre-VM management console with <code>YlvaOS snapshot list</code>, <code>YlvaOS snapshot create name memo</code>, <code>YlvaOS snapshot restore name</code>, and <code>YlvaOS snapshot delete name</code>.</p>
+      <p>Some commands also have lowercase aliases, such as <code>desktop</code>, <code>kernel</code>, <code>terminal</code>, <code>launcher</code>, <code>texteditor</code>, <code>editor</code>, <code>settings</code>, <code>files</code>, <code>packagemanager</code>, <code>repairmode</code>, and <code>connectnetwork</code>. Snapshot commands can also be used from the pre-VM management console with <code>YlvaOS snapshot list</code>, <code>YlvaOS snapshot create name memo</code>, <code>YlvaOS snapshot restore name</code>, and <code>YlvaOS snapshot delete name</code>.</p>
     </section>
 
     <section id="kernel">
@@ -438,7 +446,7 @@ Alpine Linux 3.24.1 base / YlvaOS 0.04</pre>
   </main>
 
   <footer class="wrap">
-    YlvaOS 0.04 / Elin MOD by aoi_nasuko
+    YlvaOS 0.05 / Elin MOD by aoi_nasuko
   </footer>
 </body>
 </html>

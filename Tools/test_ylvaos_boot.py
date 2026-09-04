@@ -160,7 +160,7 @@ def main() -> int:
             return 1
         with console.lock:
             snapshot = console.text
-        if "^           Ylva OS" not in snapshot or "(  * *)   by aoi_nasuko" not in snapshot or "Alpine Linux 3.24.1 base / YlvaOS 0.04" not in snapshot:
+        if "^           Ylva OS" not in snapshot or "(  * *)   by aoi_nasuko" not in snapshot or "Alpine Linux 3.24.1 base / YlvaOS 0.05" not in snapshot:
             raise RuntimeError("YlvaOS login splash was not printed")
         if args.simulate_update_notice_version:
             expected = f"Bundled:   Alpine Linux 3.24.1 base / YlvaOS {args.simulate_update_notice_version}"
@@ -180,7 +180,7 @@ def main() -> int:
         if not args.simulate_update_notice_version:
             console.send("YlvaOS update")
             console.wait_for_any(["YlvaOS is already up to date."], 30)
-            console.send("command -v SystemMonitor && command -v SnapshotManager && command -v PackageManager && command -v RepairMode && test -x /usr/lib/ylvaos/system-monitor-tui && test -x /usr/lib/ylvaos/snapshot-tui && test -x /usr/lib/ylvaos/package-helper && test -x /usr/lib/ylvaos/repair-mode && YlvaOS monitor --once | grep -q 'YlvaOS System Monitor' && printf '\\137\\137YLVA_MONITOR_ONCE_OK\\137\\137\\n'")
+            console.send("command -v AppLauncher && command -v TextEditor && command -v nano && command -v SystemMonitor && command -v SnapshotManager && command -v PackageManager && command -v RepairMode && test -x /usr/lib/ylvaos/app-launcher && test -x /usr/lib/ylvaos/text-editor && test -x /usr/lib/ylvaos/system-monitor-tui && test -x /usr/lib/ylvaos/snapshot-tui && test -x /usr/lib/ylvaos/package-helper && test -x /usr/lib/ylvaos/repair-mode && AppLauncher --list >/tmp/ylva-launcher-list && YlvaOS launch --list >/tmp/ylva-launcher-alias-list && grep -q '1) Terminal' /tmp/ylva-launcher-list && grep -q '2) File Manager' /tmp/ylva-launcher-list && grep -q '3) Settings' /tmp/ylva-launcher-list && grep -q '4) Text Editor' /tmp/ylva-launcher-list && grep -q '5) System Monitor' /tmp/ylva-launcher-list && grep -q '1) Terminal' /tmp/ylva-launcher-alias-list && TextEditor status >/tmp/ylva-editor-status && YlvaOS edit status >/tmp/ylva-editor-alias-status && grep -q 'YlvaOS Text Editor' /tmp/ylva-editor-status && grep -q 'Backend: nano' /tmp/ylva-editor-status && grep -q 'YlvaOS Text Editor' /tmp/ylva-editor-alias-status && [ \"$EDITOR\" = TextEditor ] && [ \"$VISUAL\" = TextEditor ] && TextEditor check ~/Import/example.txt >/tmp/ylva-editor-check && grep -q 'Mode: read-only' /tmp/ylva-editor-check && fc-match 'Noto Sans CJK JP' >/dev/null 2>&1 && YlvaOS monitor --once | grep -q 'YlvaOS System Monitor' && printf '\\137\\137YLVA_MONITOR_ONCE_OK\\137\\137\\n'")
             console.wait_for_any(["__YLVA_MONITOR_ONCE_OK__"], 45)
             console.send("YlvaOS package status >/tmp/ylva-package-status 2>&1 && grep -q 'YlvaOS Package Manager Helper' /tmp/ylva-package-status && YlvaOS repair status >/tmp/ylva-repair-status 2>&1 && grep -q 'YlvaOS Repair Mode' /tmp/ylva-repair-status && printf '\\137\\137YLVA_PACKAGE_REPAIR_STATUS_OK\\137\\137\\n'")
             console.wait_for_any(["__YLVA_PACKAGE_REPAIR_STATUS_OK__"], 45)

@@ -275,13 +275,13 @@
           <a href="index.en.html">English</a>
         </div>
         <h1>YlvaOS</h1>
-        <p class="lead">Elin内のコンピューター家具から起動する、実Linux VMベースの小さなOSです。YlvaOS 0.04はAlpine Linux 3.24.1をベースに、カーネルモードと軽量デスクトップモードを提供します。</p>
+        <p class="lead">Elin内のコンピューター家具から起動する、実Linux VMベースの小さなOSです。YlvaOS 0.05はAlpine Linux 3.24.1をベースに、カーネルモードと軽量デスクトップモードを提供します。</p>
       </div>
       <pre aria-label="YlvaOS splash">-----------------------------
  ^           Ylva OS
 (  * *)   by aoi_nasuko
 -----------------------------
-Alpine Linux 3.24.1 base / YlvaOS 0.04</pre>
+Alpine Linux 3.24.1 base / YlvaOS 0.05</pre>
     </div>
     <nav class="wrap" aria-label="ページ内ナビゲーション">
       <a href="#overview">概要</a>
@@ -362,6 +362,10 @@ Alpine Linux 3.24.1 base / YlvaOS 0.04</pre>
         <div>デスクトップモードからカーネルモードへ戻ります。</div>
         <div>Terminal [title]</div>
         <div>デスクトップ上にYlvaOS Terminalを開きます。<code>Ctrl+Alt+T</code> でも起動できます。</div>
+        <div>AppLauncher</div>
+        <div>Terminal、File Manager、Settings、Text Editor、System Monitorなどを探して起動する軽量ランチャーを開きます。<code>Ctrl+Alt+Space</code> でも起動できます。</div>
+        <div>TextEditor [file]</div>
+        <div>デスクトップでは編集用ウィンドウ、コンソールではnano優先の軽量エディタを開きます。vimも同梱されています。<code>~/Import</code> 配下は読み取り専用で開きます。</div>
         <div>Settings</div>
         <div>YlvaOS Settingsを開きます。</div>
         <div>Files [path]</div>
@@ -374,6 +378,10 @@ Alpine Linux 3.24.1 base / YlvaOS 0.04</pre>
         <div>YlvaOSとLinux kernelの状態を表示します。</div>
         <div>YlvaOS update</div>
         <div>MODディレクトリ内の更新データを確認し、YlvaOSのバージョンが上がっていれば更新して再起動します。新しい同梱版がある場合は起動時にも通知されます。</div>
+        <div>YlvaOS launch [app]</div>
+        <div>Application Launcherを開くか、指定した固定項目/PATH上のコマンドを起動します。</div>
+        <div>YlvaOS edit [file]</div>
+        <div>Text Editorを開きます。既定の <code>EDITOR</code> / <code>VISUAL</code> も <code>TextEditor</code> に設定されています。</div>
         <div>YlvaOS settings</div>
         <div>YlvaOS Settingsを開きます。</div>
         <div>YlvaOS files [path]</div>
@@ -407,7 +415,7 @@ Alpine Linux 3.24.1 base / YlvaOS 0.04</pre>
         <div>vm status / vm paths / vm start / vm stop</div>
         <div>VM起動前の管理コンソールで使う補助コマンドです。</div>
       </div>
-      <p>一部コマンドには小文字エイリアスがあります。例: <code>desktop</code>、<code>kernel</code>、<code>terminal</code>、<code>settings</code>、<code>files</code>、<code>packagemanager</code>、<code>repairmode</code>、<code>connectnetwork</code>。スナップショット操作はVM起動前の管理コンソールでも <code>YlvaOS snapshot list</code>、<code>YlvaOS snapshot create 名前 メモ</code>、<code>YlvaOS snapshot restore 名前</code>、<code>YlvaOS snapshot delete 名前</code> を使用できます。</p>
+      <p>一部コマンドには小文字エイリアスがあります。例: <code>desktop</code>、<code>kernel</code>、<code>terminal</code>、<code>launcher</code>、<code>texteditor</code>、<code>editor</code>、<code>settings</code>、<code>files</code>、<code>packagemanager</code>、<code>repairmode</code>、<code>connectnetwork</code>。スナップショット操作はVM起動前の管理コンソールでも <code>YlvaOS snapshot list</code>、<code>YlvaOS snapshot create 名前 メモ</code>、<code>YlvaOS snapshot restore 名前</code>、<code>YlvaOS snapshot delete 名前</code> を使用できます。</p>
     </section>
 
     <section id="kernel">
@@ -438,7 +446,7 @@ Alpine Linux 3.24.1 base / YlvaOS 0.04</pre>
   </main>
 
   <footer class="wrap">
-    YlvaOS 0.04 / Elin MOD by aoi_nasuko
+    YlvaOS 0.05 / Elin MOD by aoi_nasuko
   </footer>
 </body>
 </html>

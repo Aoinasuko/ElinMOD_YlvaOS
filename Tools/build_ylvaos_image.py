@@ -32,7 +32,7 @@ ALPINE_REPO_MAIN = f"https://dl-cdn.alpinelinux.org/alpine/{ALPINE_BRANCH}/main"
 ALPINE_REPO_COMMUNITY = f"https://dl-cdn.alpinelinux.org/alpine/{ALPINE_BRANCH}/community"
 ALPINE_ISO_URL = f"{ALPINE_RELEASE_BASE}/{ALPINE_ISO}"
 ALPINE_ISO_SHA256 = "e73a6241bd5f3c5c2d4d38c02cc52c378c0415a7c888bd292066bf36e0f41a39"
-YLVAOS_VERSION = "0.04"
+YLVAOS_VERSION = "0.05"
 
 DEFAULT_DISK_MIB = 16384
 INSTALL_TIMEOUT_SECONDS = 1800
@@ -221,6 +221,7 @@ def install_script() -> str:
             "util-linux-login",
             "procps-ng",
             "vim",
+            "nano",
             "doas",
             "less",
             "shadow",
@@ -372,12 +373,14 @@ cat >/mnt/home/ylva/README.txt <<'EOF'
 YlvaOS quick notes
 ==================
 
-- vim is preinstalled.
+- nano and vim are preinstalled.
 - Wine, PulseAudio, ALSA tools, FluidSynth, and a GM soundfont are preinstalled for lightweight desktop apps.
 - The root disk lives under LocalLow/Lafrontier/Elin/YlvaOS/vm/disk.qcow2 after the MOD provisions it.
 - Put host files in LocalLow/Lafrontier/Elin/YlvaOS/Import to expose them as a read-only guest drive.
 - QEMU runtime networking is disabled by default in the MOD backend.
 - Run ConnectNetwork and type yes to enable QEMU user-mode networking for this VM session.
+- Run AppLauncher or YlvaOS launch to find and start desktop tools.
+- Run TextEditor or YlvaOS edit to edit files. The Import folder is opened read-only.
 - After connecting, use PackageManager or YlvaOS package commands to search, update, install, and remove apk packages.
 - Run YlvaOS update after installing a newer MOD package to update YlvaOS-managed OS files from the bundled update drive.
 - Run SystemMonitor or YlvaOS monitor from the desktop to inspect CPU, memory, disk, network, and processes.
@@ -458,6 +461,8 @@ export MUSL_LOCPATH=/usr/share/i18n/locales/musl
 export LANG=ja_JP.UTF-8
 export LC_CTYPE=ja_JP.UTF-8
 export LC_MESSAGES=C.UTF-8
+export EDITOR=TextEditor
+export VISUAL=TextEditor
 export TERM=vt100
 stty rows $rows cols $cols -ixon 2>/dev/null || true
 export XDG_RUNTIME_DIR="/tmp/ylva-runtime-$user"
@@ -481,6 +486,8 @@ export PS1='YlvaOS:\w\$ '
 alias poweroff='doas poweroff'
 alias reboot='doas reboot'
 alias shutdown='doas poweroff'
+alias apps='YlvaOS launch'
+alias edit='YlvaOS edit'
 EOF_PROFILE
 chown "$user:$user" "/home/$user/.profile" >/dev/null 2>&1 || true
 
@@ -494,8 +501,15 @@ export MUSL_LOCPATH=/usr/share/i18n/locales/musl
 export LANG=ja_JP.UTF-8
 export LC_CTYPE=ja_JP.UTF-8
 export LC_MESSAGES=C.UTF-8
+export EDITOR=TextEditor
+export VISUAL=TextEditor
 export TERM=vt100
 stty rows 32 cols 140 -ixon 2>/dev/null || true
+EOF
+
+cat >/mnt/etc/profile.d/ylvaos-editor.sh <<'EOF'
+export EDITOR=TextEditor
+export VISUAL=TextEditor
 EOF
 
 cat >/mnt/etc/profile.d/ylvaos-audio.sh <<'EOF'
@@ -1774,6 +1788,448 @@ EOF
 chmod 0755 /mnt/usr/bin/Files
 ln -sf /usr/bin/Files /mnt/usr/bin/files
 
+cat >/mnt/usr/lib/ylvaos/text-editor <<'EOF'
+#!/bin/sh
+set -u
+set -f
+export PATH=/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+export MUSL_LOCPATH="${MUSL_LOCPATH:-/usr/share/i18n/locales/musl}"
+export LANG="${LANG:-ja_JP.UTF-8}"
+export LC_CTYPE="${LC_CTYPE:-ja_JP.UTF-8}"
+export LC_MESSAGES="${LC_MESSAGES:-C.UTF-8}"
+
+home_dir="${HOME:-/home/ylva}"
+
+usage() {
+    cat <<'USAGE'
+usage: TextEditor [file]
+       TextEditor edit <file>
+       TextEditor view <file>
+       TextEditor check <file>
+       TextEditor status
+
+YlvaOS edit is an alias for TextEditor.
+Files under ~/Import are opened read-only because the host Import drive is mounted read-only.
+USAGE
+}
+
+as_root() {
+    if [ "$(id -u)" -eq 0 ]; then
+        "$@"
+    else
+        doas "$@"
+    fi
+}
+
+ensure_user_dirs() {
+    mkdir -p "$home_dir/Desktop" "$home_dir/Documents" "$home_dir/Downloads" "$home_dir/Pictures" "$home_dir/Import"
+}
+
+ensure_import_mount() {
+    ensure_user_dirs
+    if mountpoint -q "$home_dir/Import" 2>/dev/null; then
+        return 0
+    fi
+
+    for dev in /dev/vdb1 /dev/vdb /dev/vdc1 /dev/vdc /dev/sda1 /dev/sda /dev/sdb1 /dev/sdb; do
+        [ -b "$dev" ] || continue
+        as_root mount -t vfat -o ro,uid="$(id -u)",gid="$(id -g)",utf8=1 "$dev" "$home_dir/Import" >/tmp/ylva-import-mount.log 2>&1 && return 0
+    done
+
+    return 1
+}
+
+expand_path() {
+    value="${1:-}"
+    case "$value" in
+        ''|home|Home)
+            value="$home_dir/Documents/notes.txt"
+            ;;
+        '~')
+            value="$home_dir"
+            ;;
+        '~/'*)
+            value="$home_dir/${value#~/}"
+            ;;
+        import|Import)
+            ensure_import_mount >/dev/null 2>&1 || true
+            value="$home_dir/Import"
+            ;;
+        import:*|Import:*)
+            ensure_import_mount >/dev/null 2>&1 || true
+            value="$home_dir/Import/${value#*:}"
+            ;;
+    esac
+    printf '%s\n' "$value"
+}
+
+canonical_path() {
+    path="$1"
+    if resolved="$(readlink -f "$path" 2>/dev/null)"; then
+        printf '%s\n' "$resolved"
+        return
+    fi
+
+    parent="$(dirname "$path")"
+    base="$(basename "$path")"
+    if resolved_parent="$(readlink -f "$parent" 2>/dev/null)"; then
+        printf '%s/%s\n' "$resolved_parent" "$base"
+    else
+        printf '%s\n' "$path"
+    fi
+}
+
+is_import_path() {
+    path="$(canonical_path "$1")"
+    import_root="$(canonical_path "$home_dir/Import")"
+    case "$path" in
+        "$import_root"|"$import_root"/*)
+            return 0
+            ;;
+    esac
+    return 1
+}
+
+status_command() {
+    echo "YlvaOS Text Editor"
+    echo "=================="
+    echo
+    echo "Editor command: TextEditor"
+    if command -v nano >/dev/null 2>&1; then
+        echo "Backend: nano"
+    else
+        echo "Backend: vim"
+    fi
+    echo "CLI alias: YlvaOS edit"
+    echo "EDITOR=${EDITOR:-TextEditor}"
+    echo "VISUAL=${VISUAL:-TextEditor}"
+    echo "Default file: $home_dir/Documents/notes.txt"
+    if mountpoint -q "$home_dir/Import" 2>/dev/null; then
+        echo "Import: mounted read-only"
+    else
+        echo "Import: not mounted"
+    fi
+    echo "Locale: ${LANG:-unknown}"
+}
+
+check_path_command() {
+    ensure_user_dirs
+    target="$(expand_path "${1:-}")"
+    case "$target" in
+        "$home_dir/Import"|"$home_dir/Import"/*)
+            ensure_import_mount >/dev/null 2>&1 || true
+            ;;
+    esac
+    if is_import_path "$target"; then
+        echo "Mode: read-only"
+        echo "Path: $target"
+    else
+        echo "Mode: editable"
+        echo "Path: $target"
+    fi
+}
+
+open_editor() {
+    mode="$1"
+    shift || true
+    ensure_user_dirs
+    target="$(expand_path "${1:-}")"
+    case "$target" in
+        "$home_dir/Import"|"$home_dir/Import"/*)
+            ensure_import_mount >/dev/null 2>&1 || true
+            ;;
+    esac
+    if [ -d "$target" ]; then
+        target="$target/untitled.txt"
+    fi
+
+    read_only=0
+    if [ "$mode" = view ]; then
+        read_only=1
+    fi
+    if is_import_path "$target"; then
+        read_only=1
+    fi
+
+    if [ "$read_only" != 1 ]; then
+        parent="$(dirname "$target")"
+        mkdir -p "$parent" 2>/dev/null || true
+    fi
+
+    if [ "$read_only" = 1 ]; then
+        echo "Opening read-only: $target"
+        echo "Use a file outside ~/Import to save changes."
+        if command -v nano >/dev/null 2>&1; then
+            exec nano -v "$target"
+        fi
+        exec vim -R "$target"
+    fi
+
+    if command -v nano >/dev/null 2>&1; then
+        exec nano "$target"
+    fi
+    exec vim '+set paste' '+startinsert' "$target"
+}
+
+case "${1:-}" in
+    help|--help|-h)
+        usage
+        ;;
+    status|--status)
+        status_command
+        ;;
+    check|--check)
+        shift || true
+        check_path_command "${1:-}"
+        ;;
+    view|read)
+        shift || true
+        open_editor view "$@"
+        ;;
+    edit|new|open)
+        shift || true
+        open_editor edit "$@"
+        ;;
+    *)
+        open_editor edit "$@"
+        ;;
+esac
+EOF
+chmod 0755 /mnt/usr/lib/ylvaos/text-editor
+
+cat >/mnt/usr/bin/TextEditor <<'EOF'
+#!/bin/sh
+set -u
+export PATH=/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+export MUSL_LOCPATH="${MUSL_LOCPATH:-/usr/share/i18n/locales/musl}"
+export LANG="${LANG:-ja_JP.UTF-8}"
+export LC_CTYPE="${LC_CTYPE:-ja_JP.UTF-8}"
+export LC_MESSAGES="${LC_MESSAGES:-C.UTF-8}"
+
+case "${1:-}" in
+    status|--status|check|--check|help|--help|-h)
+        exec /usr/lib/ylvaos/text-editor "$@"
+        ;;
+esac
+
+if [ -n "${DISPLAY:-}" ] && command -v xterm >/dev/null 2>&1 && [ "${YLVA_EDITOR_INLINE:-0}" != 1 ]; then
+    YLVA_EDITOR_INLINE=1 xterm -title "YlvaOS Text Editor" -geometry 104x32+176+136 -e /usr/lib/ylvaos/text-editor "$@"
+    exit $?
+fi
+
+exec /usr/lib/ylvaos/text-editor "$@"
+EOF
+chmod 0755 /mnt/usr/bin/TextEditor
+ln -sf /usr/bin/TextEditor /mnt/usr/bin/texteditor
+ln -sf /usr/bin/TextEditor /mnt/usr/bin/Editor
+ln -sf /usr/bin/TextEditor /mnt/usr/bin/editor
+
+cat >/mnt/usr/lib/ylvaos/app-launcher <<'EOF'
+#!/bin/sh
+set -u
+export PATH=/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+
+usage() {
+    cat <<'USAGE'
+usage: AppLauncher
+       AppLauncher --list
+       AppLauncher --run <app-or-command>
+
+YlvaOS launch is an alias for AppLauncher.
+The first launcher entries are Terminal, File Manager, Settings, Text Editor, and System Monitor.
+USAGE
+}
+
+fixed_entries() {
+    cat <<'ENTRIES'
+Terminal	Terminal	Open a YlvaOS terminal window
+File Manager	Files	Browse home folders and the read-only Import drive
+Settings	Settings	Configure YlvaOS memory, disk, desktop, audio, and network
+Text Editor	TextEditor	Edit text files with the YlvaOS editor
+System Monitor	SystemMonitor	Inspect CPU, memory, disk, network, and processes
+Snapshot Manager	SnapshotManager	Manage root disk snapshots
+Package Manager	PackageManager	Search, update, install, and remove Alpine apk packages
+Repair Mode	RepairMode	Repair desktop, user config, packages, and serial login
+Return to Kernel	Kernel	Leave the desktop and return to kernel console mode
+ENTRIES
+}
+
+normalize_name() {
+    printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -d ' _-'
+}
+
+valid_command_name() {
+    name="${1:-}"
+    case "$name" in
+        ''|-*|*/*|*\\*|*[!abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._+@:-]*)
+            return 1
+            ;;
+    esac
+    [ "${#name}" -le 128 ]
+}
+
+resolve_fixed_command() {
+    wanted="$(normalize_name "$1")"
+    fixed_entries | while IFS="$(printf '\t')" read -r label command description; do
+        [ -n "$label" ] || continue
+        if [ "$wanted" = "$(normalize_name "$label")" ] || [ "$wanted" = "$(normalize_name "$command")" ]; then
+            printf '%s\n' "$command"
+            exit 0
+        fi
+    done
+}
+
+path_commands() {
+    printf '%s' "$PATH" | tr ':' '\n' | while IFS= read -r dir; do
+        [ -d "$dir" ] || continue
+        for path in "$dir"/*; do
+            [ -f "$path" ] || continue
+            [ -x "$path" ] || continue
+            basename "$path"
+        done
+    done | sort -u |
+        grep -Ev '^(AppLauncher|applauncher|ApplicationLauncher|applicationlauncher|Launcher|launcher|app-launcher|TextEditor|texteditor|Editor|editor|YlvaOS|desktop|Desktop|kernel|Kernel)$' |
+        head -n 80
+}
+
+launcher_entries() {
+    fixed_entries
+    path_commands | while IFS= read -r command; do
+        [ -n "$command" ] || continue
+        printf '%s\t%s\t%s\n' "$command" "$command" "Run command in a terminal window"
+    done
+}
+
+list_command() {
+    echo "YlvaOS Application Launcher"
+    echo "==========================="
+    echo
+    launcher_entries | awk -F '\t' '{ printf "%2d) %-20s %s\\n", NR, $1, $3 }'
+}
+
+run_command_entry() {
+    requested="${1:-}"
+    if [ -z "$requested" ]; then
+        echo "Application name is required."
+        return 2
+    fi
+
+    command="$(resolve_fixed_command "$requested" || true)"
+    if [ -z "$command" ]; then
+        if ! valid_command_name "$requested" || ! command -v "$requested" >/dev/null 2>&1; then
+            echo "Application was not found: $requested"
+            return 1
+        fi
+        command="$requested"
+    fi
+
+    case "$command" in
+        Terminal|Files|Settings|TextEditor|SystemMonitor|SnapshotManager|PackageManager|RepairMode|Kernel)
+            "$command" &
+            ;;
+        *)
+            if [ -n "${DISPLAY:-}" ] && command -v xterm >/dev/null 2>&1; then
+                xterm -title "YlvaOS: $command" -geometry 100x28+192+152 -e "$command" &
+            else
+                "$command"
+            fi
+            ;;
+    esac
+    echo "Launched: $command"
+}
+
+pick_entry() {
+    index="$1"
+    case "$index" in
+        ''|*[!0-9]*)
+            return 1
+            ;;
+    esac
+    launcher_entries | sed -n "${index}p" | awk -F '\t' '{ print $2 }'
+}
+
+pause_screen() {
+    printf '\nPress Enter to continue... '
+    IFS= read -r _ || true
+}
+
+tui() {
+    while :; do
+        clear 2>/dev/null || true
+        list_command
+        cat <<'MENU'
+
+Type a number or application name. Use q to quit.
+MENU
+        printf 'Launch: '
+        IFS= read -r choice || exit 0
+        case "$choice" in
+            q|Q|'')
+                exit 0
+                ;;
+            *[!0-9]*)
+                run_command_entry "$choice" || true
+                pause_screen
+                ;;
+            *)
+                command="$(pick_entry "$choice" || true)"
+                if [ -n "$command" ]; then
+                    run_command_entry "$command" || true
+                else
+                    echo "Unknown selection."
+                fi
+                pause_screen
+                ;;
+        esac
+    done
+}
+
+case "${1:-}" in
+    help|--help|-h)
+        usage
+        ;;
+    --list|list)
+        list_command
+        ;;
+    --run|run|open|launch)
+        shift || true
+        run_command_entry "${1:-}"
+        ;;
+    '')
+        tui
+        ;;
+    *)
+        run_command_entry "$1"
+        ;;
+esac
+EOF
+chmod 0755 /mnt/usr/lib/ylvaos/app-launcher
+
+cat >/mnt/usr/bin/AppLauncher <<'EOF'
+#!/bin/sh
+set -u
+export PATH=/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+
+case "${1:-}" in
+    --list|list|--run|run|open|launch|help|--help|-h)
+        exec /usr/lib/ylvaos/app-launcher "$@"
+        ;;
+esac
+
+if [ "$#" -eq 0 ] && [ -n "${DISPLAY:-}" ] && command -v xterm >/dev/null 2>&1 && [ "${YLVA_LAUNCHER_INLINE:-0}" != 1 ]; then
+    YLVA_LAUNCHER_INLINE=1 xterm -title "YlvaOS Application Launcher" -geometry 104x34+128+96 -e /usr/lib/ylvaos/app-launcher &
+    exit 0
+fi
+
+exec /usr/lib/ylvaos/app-launcher "$@"
+EOF
+chmod 0755 /mnt/usr/bin/AppLauncher
+ln -sf /usr/bin/AppLauncher /mnt/usr/bin/applauncher
+ln -sf /usr/bin/AppLauncher /mnt/usr/bin/ApplicationLauncher
+ln -sf /usr/bin/AppLauncher /mnt/usr/bin/applicationlauncher
+ln -sf /usr/bin/AppLauncher /mnt/usr/bin/Launcher
+ln -sf /usr/bin/AppLauncher /mnt/usr/bin/launcher
+
 cat >/mnt/usr/lib/ylvaos/snapshot-tui <<'EOF'
 #!/bin/sh
 set -u
@@ -2685,10 +3141,13 @@ write_user_profile() {
     cat >"$home_dir/.profile" <<'EOF_PROFILE'
 export PATH=/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
 [ -f /etc/profile.d/ylvaos-locale.sh ] && . /etc/profile.d/ylvaos-locale.sh
+[ -f /etc/profile.d/ylvaos-editor.sh ] && . /etc/profile.d/ylvaos-editor.sh
 [ -f /etc/profile.d/ylvaos-audio.sh ] && . /etc/profile.d/ylvaos-audio.sh
 EOF_PROFILE
     cat >"$home_dir/.ashrc" <<'EOF_ASHRC'
 alias ll='ls -la'
+alias apps='YlvaOS launch'
+alias edit='YlvaOS edit'
 alias pkg='YlvaOS package'
 alias repair='YlvaOS repair'
 EOF_ASHRC
@@ -3009,12 +3468,14 @@ while :; do
 4) Set desktop refresh FPS
 5) Setup audio
 6) Connect network
-7) Open file manager
-8) Snapshot manager
-9) System monitor
-10) Package manager
-11) Repair mode
-12) Quit
+7) Application launcher
+8) Text editor
+9) Open file manager
+10) Snapshot manager
+11) System monitor
+12) Package manager
+13) Repair mode
+14) Quit
 
 MENU
     printf 'Select: '
@@ -3026,12 +3487,14 @@ MENU
         4) set_fps ;;
         5) YlvaOS setup audio; pause_screen ;;
         6) ConnectNetwork; pause_screen ;;
-        7) Files; pause_screen ;;
-        8) SnapshotManager; pause_screen ;;
-        9) SystemMonitor; pause_screen ;;
-        10) PackageManager; pause_screen ;;
-        11) RepairMode; pause_screen ;;
-        12|q|Q) exit 0 ;;
+        7) AppLauncher; pause_screen ;;
+        8) TextEditor; pause_screen ;;
+        9) Files; pause_screen ;;
+        10) SnapshotManager; pause_screen ;;
+        11) SystemMonitor; pause_screen ;;
+        12) PackageManager; pause_screen ;;
+        13) RepairMode; pause_screen ;;
+        14|q|Q) exit 0 ;;
         *) echo "Unknown selection."; pause_screen ;;
     esac
 done
@@ -3125,6 +3588,8 @@ case "$height" in ''|*[!0-9]* ) height=768 ;; esac
 user="${USER:-ylva}"
 home="${HOME:-/home/$user}"
 export HOME="$home"
+export EDITOR=TextEditor
+export VISUAL=TextEditor
 export XDG_RUNTIME_DIR="/tmp/ylva-runtime-$user"
 mkdir -p "$XDG_RUNTIME_DIR" "$XDG_RUNTIME_DIR/pulse" "$home/.config/openbox" "$home/.config/tint2"
 chmod 700 "$XDG_RUNTIME_DIR" 2>/dev/null || true
@@ -3164,6 +3629,11 @@ cat >"$home/.config/openbox/rc.xml" <<'EOF_OBRC'
     <keybind key="C-A-t">
       <action name="Execute">
         <command>Terminal</command>
+      </action>
+    </keybind>
+    <keybind key="C-A-space">
+      <action name="Execute">
+        <command>AppLauncher</command>
       </action>
     </keybind>
     <keybind key="C-A-k">
@@ -3292,9 +3762,14 @@ cat >"$home/.config/openbox/menu.xml" <<'EOF_OBMENU'
 <?xml version="1.0" encoding="UTF-8"?>
 <openbox_menu xmlns="http://openbox.org/3.4/menu">
   <menu id="root-menu" label="YlvaOS">
-    <item label="Settings">
+    <item label="Application Launcher">
       <action name="Execute">
-        <command>Settings</command>
+        <command>AppLauncher</command>
+      </action>
+    </item>
+    <item label="Terminal">
+      <action name="Execute">
+        <command>Terminal</command>
       </action>
     </item>
     <item label="File Manager">
@@ -3302,9 +3777,14 @@ cat >"$home/.config/openbox/menu.xml" <<'EOF_OBMENU'
         <command>Files</command>
       </action>
     </item>
-    <item label="Package Manager">
+    <item label="Text Editor">
       <action name="Execute">
-        <command>PackageManager</command>
+        <command>TextEditor</command>
+      </action>
+    </item>
+    <item label="Settings">
+      <action name="Execute">
+        <command>Settings</command>
       </action>
     </item>
     <item label="System Monitor">
@@ -3312,19 +3792,20 @@ cat >"$home/.config/openbox/menu.xml" <<'EOF_OBMENU'
         <command>SystemMonitor</command>
       </action>
     </item>
+    <separator />
     <item label="Snapshot Manager">
       <action name="Execute">
         <command>SnapshotManager</command>
       </action>
     </item>
+    <item label="Package Manager">
+      <action name="Execute">
+        <command>PackageManager</command>
+      </action>
+    </item>
     <item label="Repair Mode">
       <action name="Execute">
         <command>RepairMode</command>
-      </action>
-    </item>
-    <item label="Terminal">
-      <action name="Execute">
-        <command>Terminal</command>
       </action>
     </item>
     <separator />
@@ -3499,7 +3980,8 @@ emit_host() {
 }
 
 usage() {
-    echo "usage: YlvaOS status | YlvaOS update | YlvaOS settings | YlvaOS files [path] | YlvaOS monitor"
+    echo "usage: YlvaOS status | YlvaOS update | YlvaOS launch [app] | YlvaOS edit [file]"
+    echo "       YlvaOS settings | YlvaOS files [path] | YlvaOS monitor"
     echo "       YlvaOS snapshot list | create <name> [memo] | restore <name> | delete <name>"
     echo "       YlvaOS package status|update|search <name>|install [--yes] <package...>|remove [--yes] <package...>"
     echo "       YlvaOS repair status|desktop [--yes]|packages [--check|--yes]|user-config [--yes]|safe-console [--yes]"
@@ -3631,6 +4113,14 @@ case "${1:-}" in
         ;;
     update)
         /usr/lib/ylvaos/update-from-mod
+        ;;
+    launch|launcher|apps|app)
+        shift || true
+        AppLauncher "$@"
+        ;;
+    edit|editor|text|text-editor|texteditor)
+        shift || true
+        TextEditor "$@"
         ;;
     settings)
         Settings
@@ -3780,20 +4270,29 @@ etc/modules
 etc/motd
 etc/os-release
 etc/profile.d/ylvaos-audio.sh
+etc/profile.d/ylvaos-editor.sh
 etc/profile.d/ylvaos-locale.sh
 etc/profile.d/ylvaos-terminal.sh
 etc/X11/Xwrapper.config
 etc/X11/xorg.conf.d/10-ylvaos-input.conf
 etc/ylvaos-release
 sbin/ylva-getty
+usr/bin/AppLauncher
+usr/bin/applauncher
+usr/bin/ApplicationLauncher
+usr/bin/applicationlauncher
 usr/bin/ConnectNetwork
 usr/bin/connectnetwork
 usr/bin/Desktop
 usr/bin/desktop
 usr/bin/Files
 usr/bin/files
+usr/bin/Editor
+usr/bin/editor
 usr/bin/Kernel
 usr/bin/kernel
+usr/bin/Launcher
+usr/bin/launcher
 usr/bin/PackageManager
 usr/bin/packagemanager
 usr/bin/RepairMode
@@ -3804,6 +4303,8 @@ usr/bin/Settings
 usr/bin/settings
 usr/bin/SystemMonitor
 usr/bin/systemmonitor
+usr/bin/TextEditor
+usr/bin/texteditor
 usr/bin/Terminal
 usr/bin/terminal
 usr/bin/YlvaOS
@@ -3823,6 +4324,7 @@ usr/local/bin/wineconsole
 usr/local/bin/winefile
 usr/local/bin/wineserver
 usr/lib/ylvaos/managed-files
+usr/lib/ylvaos/app-launcher
 usr/lib/ylvaos/configure-wine-midi
 usr/lib/ylvaos/package-helper
 usr/lib/ylvaos/repair-mode
@@ -3833,6 +4335,7 @@ usr/lib/ylvaos/setup-audio
 usr/lib/ylvaos/setup-font
 usr/lib/ylvaos/setup-wine
 usr/lib/ylvaos/system-monitor-tui
+usr/lib/ylvaos/text-editor
 usr/lib/ylvaos/update-from-mod
 usr/lib/ylvaos/wine-env
 usr/local/bin/ylva-desktop-session
